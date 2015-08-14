@@ -36,6 +36,7 @@ modulew1 = Extension ('quisk._quisk',
 	sources = ['quisk.c', 'sound.c', 'sound_directx.c',
 		'is_key_down.c', 'microphone.c', 'utility.c',
 		'filter.c', 'extdemod.c', 'freedv.c'],
+    #extra_compile_args = ['-g'],
 	)
 
 modulew2 = Extension ('quisk.sdriqpkg.sdriq',

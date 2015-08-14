@@ -17,6 +17,7 @@
 #define IMD_TONE_2			1600
 #define INTERP_FILTER_TAPS	85			// interpolation filter
 #define MIC_OUT_RATE		48000		// mic post-processing sample rate
+#define PA_LIST_SIZE 		16		// max number of pulseaudio devices
 
 // Test the audio: 0 == No test; normal operation;
 // 1 == Copy real data to the output; 2 == copy imaginary data to the output;
@@ -75,6 +76,10 @@ struct sound_dev {				// data for sound capture or playback device
 	complex double dc_remove;			// filter to remove DC from samples
 	double save_sample;			// Used to delay the I or Q sample
 	char msg1[QUISK_SC_SIZE];	// string for information message
+    int stream_dir_record;		// 1 for recording, 0 for playback
+    char server[IP_SIZE];		// server string for remote pulseaudio
+    int stream_format;			// format of pulseaudio device
+    volatile int cork_status;	// 1 for corked, 0 for uncorked
 } ;
 
 struct sound_conf {
@@ -108,6 +113,7 @@ struct sound_conf {
 	int mic_channel_I;		// channel number for microphone: 0, 1, ...
 	int mic_channel_Q;
 	double mic_out_volume;
+    char IQ_server[IP_SIZE];	//IP address of optional streaming IQ server (pulseaudio)
 } ;
 
 enum quisk_rec_state {
@@ -234,7 +240,9 @@ void quisk_close_sound_portaudio(void);
 int  quisk_read_pulseaudio(struct sound_dev *, complex double *);
 void quisk_play_pulseaudio(struct sound_dev *, int, complex double *, int, double);
 void quisk_start_sound_pulseaudio(struct sound_dev **, struct sound_dev **);
-void quisk_close_sound_pulseaudio(struct sound_dev **, struct sound_dev **);
+void quisk_close_sound_pulseaudio(void);
+void quisk_cork_pulseaudio(struct sound_dev *, int);
+void quisk_flush_pulseaudio(struct sound_dev *);
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 /*

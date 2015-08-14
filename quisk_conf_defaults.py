@@ -968,3 +968,6 @@ agc_max_gain = 15000.0
 # This is the AGC release time in seconds.  It must be greater than zero.  It is the time
 # constant for gain recovery after a strong signal disappears.
 agc_release_time = 1.0
+
+#IP Adddress for remote pulseaudio IQ server (pulseaudio).
+IQ_Server_IP = ""

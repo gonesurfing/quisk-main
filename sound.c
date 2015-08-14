@@ -431,6 +431,7 @@ int quisk_read_sound(void)	// Called from sound thread
 	static double cwCount=0;
 	static complex double tuneVector = (double)CLIP32 / CLIP16;	// Convert 16-bit to 32-bit samples
 	static struct quisk_cFilter filtInterp={NULL};
+    int key_state = quisk_is_key_down(); //reading this once is important for predicable bevavior on cork/flush
 #if DEBUG_MIC == 1
 	complex double tmpSamples[SAMP_BUFFER_SIZE];
 #endif
@@ -439,6 +440,35 @@ int quisk_read_sound(void)	// Called from sound thread
 #if DEBUG_IO > 1
 	QuiskPrintTime("Start read_sound", 0);
 #endif
+    
+    (quisk_sound_state.IQ_server[0] && rxMode > 1) {
+        if (Capture.handle && Capture.driver == DEV_DRIVER_PULSEAUDIO) {
+            if (key_state == 1 && !Capture.cork_status)
+            quisk_cork_pulseaudio(&Capture, 1);
+            else if (key_state == 0 && Capture.cork_status) {
+                quisk_cork_pulseaudio(&Capture, 0);
+                quisk_flush_pulseaudio(&Capture);
+            }
+        }
+        if (MicPlayback.handle && MicPlayback.driver == DEV_DRIVER_PULSEAUDIO) {
+            if (key_state == 0 && !MicPlayback.cork_status)
+            quisk_cork_pulseaudio(&MicPlayback, 1);
+            else if (key_state == 1 && MicPlayback.cork_status) {
+                quisk_cork_pulseaudio(&MicPlayback, 0);
+                quisk_flush_pulseaudio(&MicPlayback);
+            }
+        }
+    }
+    else if (quisk_sound_state.IQ_server[0]) {
+        if (Capture.handle && Capture.driver == DEV_DRIVER_PULSEAUDIO) {
+            if (Capture.cork_status)
+            quisk_cork_pulseaudio(&Capture, 0);
+        }
+        if (MicPlayback.handle && MicPlayback.driver == DEV_DRIVER_PULSEAUDIO) {
+            if (MicPlayback.cork_status)
+            quisk_cork_pulseaudio(&MicPlayback, 0);
+        }
+        
 	if (pt_sample_read) {			// read samples from SDR-IQ or UDP
 		nSamples = (*pt_sample_read)(cSamples);
 	}
@@ -655,7 +685,7 @@ void quisk_close_sound(void)	// Called from sound thread
 #endif
 	quisk_close_sound_portaudio();
 	quisk_close_sound_alsa(CaptureDevices, PlaybackDevices);
-	quisk_close_sound_pulseaudio(CaptureDevices, PlaybackDevices);
+	quisk_close_sound_pulseaudio();
 	if (pt_sample_stop)
 		(*pt_sample_stop)();
 	strncpy (quisk_sound_state.err_msg, CLOSED_TEXT, QUISK_SC_SIZE);
@@ -875,6 +905,22 @@ void quisk_open_sound(void)	// Called from GUI thread
 	set_num_channels (&DigitalInput);
 	set_num_channels (&DigitalOutput);
 	set_num_channels (&RawSamplePlayback);
+    
+    //Needed for pulse audio context connection (KM4DSJ)
+    Capture.stream_dir_record = 1;
+    Playback.stream_dir_record = 0;
+    MicCapture.stream_dir_record = 1;
+    MicPlayback.stream_dir_record= 0;
+    DigitalInput.stream_dir_record = 1;
+    DigitalOutput.stream_dir_record = 0;
+    RawSamplePlayback.stream_dir_record = 0;
+    
+    //For remote IQ server over pulseaudio (KM4DSJ)
+    if (quisk_sound_state.IQ_server[0]) {
+        strncpy(Capture.server, quisk_sound_state.IQ_server, IP_SIZE);
+        strncpy(MicPlayback.server, quisk_sound_state.IQ_server, IP_SIZE);
+    }
+    
 
 #ifdef FIX_H101
 	Capture.channel_Delay = Capture.channel_Q;	// Obsolete; do not use.

@@ -2913,6 +2913,8 @@ static PyObject * open_sound(PyObject * self, PyObject * args)
 	strncpy(quisk_sound_state.mic_dev_name, mname, QUISK_SC_SIZE);
 	strncpy(quisk_sound_state.name_of_mic_play, mpname, QUISK_SC_SIZE);
 	strncpy(quisk_sound_state.mic_ip, mip, IP_SIZE);
+    strncpy(quisk_sound_state.IQ_server, QuiskGetConfigString("IQ_Server_IP", ""), IP_SIZE);
+    printf("IQ_server %s\n", quisk_sound_state.IQ_server);
 	fft_error = 0;
 	quisk_open_sound();
 	quisk_open_mic();
