@@ -441,7 +441,7 @@ int quisk_read_sound(void)	// Called from sound thread
 	QuiskPrintTime("Start read_sound", 0);
 #endif
     
-    (quisk_sound_state.IQ_server[0] && rxMode > 1) {
+    if (quisk_sound_state.IQ_server[0] && rxMode > 1) {
         if (Capture.handle && Capture.driver == DEV_DRIVER_PULSEAUDIO) {
             if (key_state == 1 && !Capture.cork_status)
             quisk_cork_pulseaudio(&Capture, 1);
@@ -468,7 +468,8 @@ int quisk_read_sound(void)	// Called from sound thread
             if (MicPlayback.cork_status)
             quisk_cork_pulseaudio(&MicPlayback, 0);
         }
-        
+    }
+    
 	if (pt_sample_read) {			// read samples from SDR-IQ or UDP
 		nSamples = (*pt_sample_read)(cSamples);
 	}

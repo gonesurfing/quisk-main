@@ -13,10 +13,11 @@ fp.close()
 module1 = Extension ('quisk._quisk',
 	#include_dirs = ['.'],
 	#library_dirs = ['.'],
-	libraries = ['asound', 'portaudio', 'pulse-simple', 'fftw3', 'm'],
+	libraries = ['asound', 'portaudio', 'pulse', 'fftw3', 'm'],
 	sources = ['quisk.c', 'sound.c', 'sound_alsa.c', 'sound_portaudio.c', 'sound_pulseaudio.c',
 		'is_key_down.c', 'microphone.c', 'utility.c',
 		'filter.c', 'extdemod.c', 'freedv.c'],
+    #extra_compile_args = ['-g'],
 	)
 
 module2 = Extension ('quisk.sdriqpkg.sdriq',
@@ -36,7 +37,6 @@ modulew1 = Extension ('quisk._quisk',
 	sources = ['quisk.c', 'sound.c', 'sound_directx.c',
 		'is_key_down.c', 'microphone.c', 'utility.c',
 		'filter.c', 'extdemod.c', 'freedv.c'],
-    #extra_compile_args = ['-g'],
 	)
 
 modulew2 = Extension ('quisk.sdriqpkg.sdriq',
@@ -50,19 +50,20 @@ modulew2 = Extension ('quisk.sdriqpkg.sdriq',
 
 # Changes for MacOS support thanks to Mario, DL3LSM.
 modulem1 = Extension ('quisk._quisk',
-	#include_dirs = ['.'],
-	#library_dirs = ['.'],
-	libraries = ['portaudio', 'fftw3', 'm'],
+	include_dirs = ['.', '/opt/local/include'],
+	library_dirs = ['.', '/opt/local/lib'],
+	libraries = ['portaudio', 'fftw3', 'm', 'pulse'],
 	sources = ['quisk.c', 'sound.c', 'sound_portaudio.c',
 		'is_key_down.c', 'microphone.c', 'utility.c',
-		'filter.c', 'extdemod.c', 'freedv.c'],
+		'filter.c', 'extdemod.c', 'freedv.c', 'sound_pulseaudio.c'],
 	)
 
 modulem2 = Extension ('quisk.sdriqpkg.sdriq',
 	#libraries = [':_quisk.so', 'm'],
 	libraries = ['m', 'ftd2xx'],
 	sources = ['import_quisk_api.c', 'sdriqpkg/sdriq.c'],
-	include_dirs = ['.', '..'],
+	include_dirs = ['.', '..', '/opt/local/include'],
+    library_dirs = ['.', '/opt/local/lib'],
 	#runtime_library_dirs = ['.'],
 	)
 
