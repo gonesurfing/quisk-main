@@ -18,4 +18,4 @@ winuninstall:
 	msiexec -x wix\\quisk.msi
 
 macports:
-	env ARCHFLAGS="-arch x86_64" python setup.py build_ext --force --inplace
+	env ARCHFLAGS="-arch x86_64" python setup.py build_ext --force --inplace -D USE_MACPORTS

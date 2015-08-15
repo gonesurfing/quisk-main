@@ -1,5 +1,6 @@
 from distutils.core import setup, Extension
 import sys
+import os
 
 # You must define the version here.  A title string including
 # the version will be written to __init__.py and read by quisk.py.
@@ -17,7 +18,6 @@ module1 = Extension ('quisk._quisk',
 	sources = ['quisk.c', 'sound.c', 'sound_alsa.c', 'sound_portaudio.c', 'sound_pulseaudio.c',
 		'is_key_down.c', 'microphone.c', 'utility.c',
 		'filter.c', 'extdemod.c', 'freedv.c'],
-    #extra_compile_args = ['-g'],
 	)
 
 module2 = Extension ('quisk.sdriqpkg.sdriq',
@@ -50,12 +50,12 @@ modulew2 = Extension ('quisk.sdriqpkg.sdriq',
 
 # Changes for MacOS support thanks to Mario, DL3LSM.
 modulem1 = Extension ('quisk._quisk',
-	include_dirs = ['.', '/opt/local/include'],
-	library_dirs = ['.', '/opt/local/lib'],
+    #include_dirs = ['.'],
+    #library_dirs = ['.'],
 	libraries = ['portaudio', 'fftw3', 'm', 'pulse'],
 	sources = ['quisk.c', 'sound.c', 'sound_portaudio.c',
 		'is_key_down.c', 'microphone.c', 'utility.c',
-		'filter.c', 'extdemod.c', 'freedv.c', 'sound_pulseaudio.c'],
+		'filter.c', 'extdemod.c', 'freedv.c'],
 	)
 
 modulem2 = Extension ('quisk.sdriqpkg.sdriq',
@@ -67,8 +67,29 @@ modulem2 = Extension ('quisk.sdriqpkg.sdriq',
 	#runtime_library_dirs = ['.'],
 	)
 
+# Changes for building from macports
+modulemp1 = Extension ('quisk._quisk',
+    include_dirs = ['.', '/opt/local/include'],
+    library_dirs = ['.', '/opt/local/lib'],
+    libraries = ['portaudio', 'fftw3', 'm', 'pulse'],
+    sources = ['quisk.c', 'sound.c', 'sound_portaudio.c',
+        'is_key_down.c', 'microphone.c', 'utility.c',
+        'filter.c', 'extdemod.c', 'freedv.c', 'sound_pulseaudio.c'],
+    )
+
+modulemp2 = Extension ('quisk.sdriqpkg.sdriq',
+    #libraries = [':_quisk.so', 'm'],
+    libraries = ['m', 'ftd2xx'],
+    sources = ['import_quisk_api.c', 'sdriqpkg/sdriq.c'],
+    include_dirs = ['.', '..', '/opt/local/include'],
+    library_dirs = ['.', '/opt/local/lib'],
+    #runtime_library_dirs = ['.'],
+    )
+
 if sys.platform == "win32":
   Modules = [modulew1, modulew2]
+elif sys.platform == "darwin" and os.path.exists('/opt/local/lib'):
+  Modules = [modulemp1, modulemp2]
 elif sys.platform == "darwin":
   Modules = [modulem1, modulem2]
 else:

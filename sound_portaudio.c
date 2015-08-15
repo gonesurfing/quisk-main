@@ -477,6 +477,12 @@ int  quisk_read_alsa(struct sound_dev * dev, complex double * samp)
 	return 0;
 }
 
+void quisk_mixer_set(char * card_name, int numid, PyObject * value, char * err_msg, int err_size)
+{
+    err_msg[0] = 0;
+}
+
+#if !defined USE_MACPORTS
 int  quisk_read_pulseaudio(struct sound_dev * dev, complex double * samp)
 {
 	return 0;
@@ -494,10 +500,6 @@ void quisk_close_sound_pulseaudio(struct sound_dev ** pCapture, struct sound_dev
 {
 }
 
-void quisk_mixer_set(char * card_name, int numid, PyObject * value, char * err_msg, int err_size)
-{
-	err_msg[0] = 0;
-}
 
 PyObject * quisk_pa_sound_devices(PyObject * self, PyObject * args)
 {	// Return a list of PulseAudio device names [pycapt, pyplay]
@@ -512,4 +514,5 @@ PyObject * quisk_pa_sound_devices(PyObject * self, PyObject * args)
 	PyList_Append(pylist, pyplay);
 	return pylist;
 }
+#endif
 #endif
