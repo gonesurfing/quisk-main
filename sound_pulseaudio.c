@@ -55,7 +55,7 @@
 
 //compiling with verbose = 1 shows stream connection info.
 //compiling with verbose = 2 shows stream latency on console @ TIME_EVENT_USEC frequency
-int verbose = 1;
+int verbose = 0;
 
 //This is for verbose = 2 latency measurements
 #define TIME_EVENT_USEC 100000
