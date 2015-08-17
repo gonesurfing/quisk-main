@@ -27,16 +27,6 @@
  * Eric Thornton, KM4DSJ 2015
 */
 
-/*
-***fix****
-* error checking of api functions
-* show pulseaudio devices reassigns names incorrectly (overriding conf file)
-* catch signals for clean threaded mainloop exit
-
-***nice-to-have***
-*Detect and use 24 bit streams
-*/
-
 #include <Python.h>
 #include <stdio.h>
 #include <string.h>
