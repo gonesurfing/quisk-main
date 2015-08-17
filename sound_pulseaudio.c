@@ -28,19 +28,13 @@
 */
 
 /*
-***must fix****
+***fix****
 * error checking of api functions
 * show pulseaudio devices reassigns names incorrectly (overriding conf file)
-* code cleanup
-* safety around device lists being non pulse audio and mixed devices for rec/playback.
 * catch signals for clean threaded mainloop exit
 
 ***nice-to-have***
 *Detect and use 24 bit streams
-
-***testing****
-* test that bare "pulse" streams will configure properly with NULL as a name.
-* test fragsize changes on remote context with different server latencies
 */
 
 #include <Python.h>
@@ -542,7 +536,8 @@ int quisk_read_pulseaudio(struct sound_dev *dev, complex double *cSamples) {
        }
        
        if (nSamples * dev->num_channels * dev->sample_bytes + read_bytes >= SAMP_BUFFER_SIZE) {
-           printf("buffer overflow on %s\n", dev->name);
+           if (verbose)
+               printf("buffer full on %s\n", dev->name);
            pa_stream_drop(s);		// limit read request to buffer size
            break;
        }
