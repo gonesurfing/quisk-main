@@ -153,11 +153,13 @@ static void stream_corked_callback(pa_stream *s, int success, void *userdata) {
     struct sound_dev *dev = userdata;
     
     if (s) {
-        printf("Stream cork/uncork %s success\n", dev->name);
+        if (verbose)
+            printf("Stream cork/uncork %s success\n", dev->name);
         pa_threaded_mainloop_signal(pa_ml, 0);
     }
     else {
-        printf("Stream cork/uncork %s Failure!\n", dev->name);
+        if (verbose)
+            printf("Stream cork/uncork %s Failure!\n", dev->name);
         exit(1);
     }
 }
@@ -754,13 +756,15 @@ void quisk_start_sound_pulseaudio(struct sound_dev **pCapture, struct sound_dev 
 
     if (RemotePulseDevices[0]) {	//we've got at least 1 remote device
         pa_IQ_ctx = pa_context_new(pa_mlapi, "Quisk-remote");
-        pa_context_connect(pa_IQ_ctx, quisk_sound_state.IQ_server, 0, NULL);
+        if (pa_context_connect(pa_IQ_ctx, quisk_sound_state.IQ_server, 0, NULL) < 0)
+            printf("Failed to connect to remote Pulseaudio server\n");
         pa_context_set_state_callback(pa_IQ_ctx, state_cb, RemotePulseDevices); //send a list of remote devices to open
     }
 
     if (LocalPulseDevices[0]) {	//we've got at least 1 local device
         pa_ctx = pa_context_new(pa_mlapi, "Quisk-local");
-        pa_context_connect(pa_ctx, NULL, 0, NULL);
+        if (pa_context_connect(pa_ctx, NULL, 0, NULL) < 0)
+            printf("Failed to connect to local Pulseaudio server\n");
         pa_context_set_state_callback(pa_ctx, state_cb, LocalPulseDevices);
     }
 
