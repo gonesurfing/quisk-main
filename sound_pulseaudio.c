@@ -478,8 +478,12 @@ int quisk_read_pulseaudio(struct sound_dev *dev, complex double *cSamples) {
     if (!dev)
         return 0;
     
-    if (dev->cork_status)
+    if (dev->cork_status) {
+        if (dev->read_frames != 0) {
+            WaitForPoll();
+        }
         return 0;
+    }
 
 
    // Note: Access to PulseAudio data from our sound thread requires locking the threaded mainloop.
