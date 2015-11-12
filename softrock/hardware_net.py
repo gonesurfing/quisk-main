@@ -21,13 +21,10 @@ class Hardware(BaseHardware):
     if freq:
       print ('Run freq', freq)
       text = "found usbsoftrock daemon"
-      self.application.bottom_widgets.info_text.SetLabel(text)
-      return True
     else:
       print ('cannot find usbsoftrock daemon')
       text = "cannot find usbsoftrock daemon"
-      self.application.bottom_widgets.info_text.SetLabel(text)
-      return False
+    return text
 
   def close(self):
     pass
@@ -97,7 +94,7 @@ class Hardware(BaseHardware):
       else:
         print ('error doing', message)
         text = "error setting ptt on or off!"
-        self.application.bottom_widgets.info_text.SetLabel(text)
+        self.config_text = text
   def OnSpot(self, level):
     self.spot_level = level
 
