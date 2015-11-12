@@ -160,3 +160,22 @@ void QuiskSleepMicrosec(int usec)
 	nanosleep(&tspec, NULL);
 #endif
 }
+
+void QuiskMeasureRate(const char * msg, int count)
+{  //measure the sample rate
+	double tm;
+	static int total;
+	static double time0=0, time_pr;
+
+	if (count && time0 == 0) {		// init
+		time0 = time_pr = QuiskTimeSec();
+		return;
+	}
+	if (time0 == 0)
+		return;
+	total += count;
+	if (QuiskTimeSec() > time_pr + 1.0) {	// time to print
+		time_pr = tm = QuiskTimeSec();
+		printf("%s count %d, time %.3lf, rate %.3lf\n", msg, total, tm - time0, total / (tm - time0));
+	}
+}

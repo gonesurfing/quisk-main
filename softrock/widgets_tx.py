@@ -10,6 +10,6 @@ import math
 class BottomWidgets:	# Add extra widgets to the bottom of the screen
   def __init__(self, app, hardware, conf, frame, gbs, vertBox):
     self.hardware = hardware
-    self.info_text = app.QuiskText(frame, 'Info', app.button_height)
-    gbs.Add(self.info_text, (4, 0), (1, 14), flag=wx.EXPAND)
+    #self.info_text = app.QuiskText(frame, 'Info', app.button_height)
+    #gbs.Add(self.info_text, (4, 0), (1, 27), flag=wx.EXPAND)
 

@@ -1,3 +1,75 @@
+Quisk Version 3.7.8  November 2015
+==================================
+Foreign users can have trouble with their config directory on Windows because the "Documents"
+directory is in a foreign language; for example, "Mine Dokumenter".  I changed Quisk to use
+the registry to find the name of the "Documents" directory so Quisk should find it in any language.
+
+When playing a CQ loop using the "Transmit sound from WAV file" feature, pressing
+hardware PTT will cancel the play loop.
+
+I added the hardware information to the top of the screen.  This is convenient when running
+multiple instances of Quisk with multiple hardwares.  I removed the SoftRock status line at
+the bottom of the screen.  The same information is in the Config/Config screen and in the
+title line at the top.
+
+When operating in Split mode, the RIT control used to only change the Rx channel.  But
+that meant that the other Tx channel did not have RIT.  So in CW mode, a station exactly
+on the Tx frequency would not be heard.  RIT now works on both channels in Split mode.
+
+The "Record Rx audio" feature now records Tx audio too.  This is useful to record and review
+a QSO.
+
+Quisk Version 3.7.7  September 2015
+===================================
+Eric and I fixed some problems with the PulseAudio code, including problems displaying very
+long device names. I reorganized the file quisk_conf_defaults.py to make it easier
+to read.  I changed the colors on the Config screen to make the controls look better.
+
+Quisk Version 3.7.6  September 2015
+===================================
+The PulseAudio code was completely rewritten by Eric Thornton, KM4DSJ.  It now uses
+the asynchronous interface. This will:
+1)Improve stability/performance. We can now manage latency events how we want to and prevent
+ever increasing latency due to CPU load or network delays. latency_millisecs in the quick_conf.py
+file will established the target buffer size for playback. Realtime latency for pulse audio
+streams is available on the config/status tab.
+
+2)Allow connection to two different PulseAudio servers. The default connection is to the local
+machine for normal usage. A separate machine can be specified to pass IQ audio via the network.
+This is useful to utilize a Softrock or Peaberry via a raspberry pi or other remote computer.
+Specify IQ_Server_IP = "your.ip.here" in your quisk_conf.py to utilize this option. Be sure to
+set latency_millisecs to something reasonable (300 works for me over wifi). NOTE: To keep network
+congestion down, all modes except CW will "cork" the idle up/down IQ stream.
+3)Quisk will attempt to utilize native 16 bit LE format if a PulseAudio sink is configured this way.
+Default fallback is Float 32. This reduces network overhead for remote IQ audio streaming while not
+losing resolution for any local streams that are configured as floating point. 
+
+Additional changes:
+-Remote control of Softrock receivers via usbsoftrock. Add usbsr_ip_address = "your.ip.here",
+usbsr_port=port#, and import hardware_net.py in quick_conf.py to communicate with a usbsoftrock
+daemon. Start usbsoftrock on the remote machine with the -D option.
+-Added a macports target to the makefile to utilize dependency libraries from macports.
+This option now allows use of PulseAudio on OSX.
+
+Eric
+KM4DSJ
+
+
+Quisk Version 3.7.5  September 2015
+===================================
+I changed the code for full-screen mode.  You can now enter window sizes directly.  See
+window_width in the file quisk_conf_defaults.py.
+
+I added two more bits to tx_control for the FPGA protocol. I updated the PyUSB
+package that ships with Quisk to version 1.0.0b2.
+
+The received characters from FreeDV now appear in the upper left of the graph.  I added
+the new FreeDV 700 and 700B modes.  Right-click the FDV button to select the mode.
+
+To make it clear when buttons have added functions, I added a miniature slider to buttons
+that can be right-clicked, and a circular arrow to buttons that can be clicked repeatedly.
+This can be turned off in your config file.
+
 Quisk Version 3.7.4  August 2015
 ================================
 The Spot button transmits a variable level carrier in all modes, not just SSB.  The new config

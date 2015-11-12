@@ -615,7 +615,7 @@ void quisk_start_sound_pulseaudio(struct sound_dev ** pCapture, struct sound_dev
 {
 }
 
-void quisk_close_sound_pulseaudio(struct sound_dev ** pCapture, struct sound_dev ** pPlayback)
+void quisk_close_sound_pulseaudio()
 {
 }
 

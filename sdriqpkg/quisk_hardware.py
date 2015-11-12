@@ -4,7 +4,10 @@
 from __future__ import print_function
 
 import _quisk as QS
-import sdriq
+try:
+  import sdriq
+except ImportError:
+  from sdriqpkg import sdriq
 
 from quisk_hardware_model import Hardware as BaseHardware
 

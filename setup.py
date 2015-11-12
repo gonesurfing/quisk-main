@@ -5,7 +5,7 @@ import os
 # You must define the version here.  A title string including
 # the version will be written to __init__.py and read by quisk.py.
 
-Version = '3.7.4'
+Version = '3.7.8'
 
 fp = open("__init__.py", "w")	# write title string
 fp.write("#QUISK version %s\n" % Version)
@@ -50,8 +50,8 @@ modulew2 = Extension ('quisk.sdriqpkg.sdriq',
 
 # Changes for MacOS support thanks to Mario, DL3LSM.
 modulem1 = Extension ('quisk._quisk',
-    #include_dirs = ['.'],
-    #library_dirs = ['.'],
+	#include_dirs = ['.'],
+	#library_dirs = ['.'],
 	libraries = ['portaudio', 'fftw3', 'm', 'pulse'],
 	sources = ['quisk.c', 'sound.c', 'sound_portaudio.c',
 		'is_key_down.c', 'microphone.c', 'utility.c',
@@ -63,28 +63,28 @@ modulem2 = Extension ('quisk.sdriqpkg.sdriq',
 	libraries = ['m', 'ftd2xx'],
 	sources = ['import_quisk_api.c', 'sdriqpkg/sdriq.c'],
 	include_dirs = ['.', '..', '/opt/local/include'],
-    library_dirs = ['.', '/opt/local/lib'],
+	library_dirs = ['.', '/opt/local/lib'],
 	#runtime_library_dirs = ['.'],
 	)
 
-# Changes for building from macports
+# Changes for building from macports provided by Eric, KM4DSJ
 modulemp1 = Extension ('quisk._quisk',
-    include_dirs = ['.', '/opt/local/include'],
-    library_dirs = ['.', '/opt/local/lib'],
-    libraries = ['portaudio', 'fftw3', 'm', 'pulse'],
-    sources = ['quisk.c', 'sound.c', 'sound_portaudio.c',
-        'is_key_down.c', 'microphone.c', 'utility.c',
-        'filter.c', 'extdemod.c', 'freedv.c', 'sound_pulseaudio.c'],
-    )
+	include_dirs = ['.', '/opt/local/include'],
+	library_dirs = ['.', '/opt/local/lib'],
+	libraries = ['portaudio', 'fftw3', 'm', 'pulse'],
+	sources = ['quisk.c', 'sound.c', 'sound_portaudio.c',
+		'is_key_down.c', 'microphone.c', 'utility.c',
+		'filter.c', 'extdemod.c', 'freedv.c', 'sound_pulseaudio.c'],
+	)
 
 modulemp2 = Extension ('quisk.sdriqpkg.sdriq',
-    #libraries = [':_quisk.so', 'm'],
-    libraries = ['m', 'ftd2xx'],
-    sources = ['import_quisk_api.c', 'sdriqpkg/sdriq.c'],
-    include_dirs = ['.', '..', '/opt/local/include'],
-    library_dirs = ['.', '/opt/local/lib'],
-    #runtime_library_dirs = ['.'],
-    )
+	#libraries = [':_quisk.so', 'm'],
+	libraries = ['m', 'ftd2xx'],
+	sources = ['import_quisk_api.c', 'sdriqpkg/sdriq.c'],
+	include_dirs = ['.', '..', '/opt/local/include'],
+	library_dirs = ['.', '/opt/local/lib'],
+	#runtime_library_dirs = ['.'],
+	)
 
 if sys.platform == "win32":
   Modules = [modulew1, modulew2]

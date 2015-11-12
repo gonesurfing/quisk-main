@@ -4,8 +4,10 @@
  * 
  * Philip G. Lee <rocketman768@gmail.com>, 2014
  * Jim Ahlstrom, N2ADR, October, 2014
+ * Eric Thornton, KM4DSJ, September, 2015
  * 
- * Rewritten using asynchronous API by Eric Thornton, 2015
+ * This code replaces the pulseaudio-simple version by Philip G. Lee.  It
+ * uses the asynchronous pulseaudio API.  It was written by Eric Thornton, 2015.
  *
  * Quisk is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -478,13 +480,15 @@ int quisk_read_pulseaudio(struct sound_dev *dev, complex double *cSamples) {
     if (!dev)
         return 0;
     
+    if (dev->cork_status)
+        return 0;
+
     if (dev->cork_status) {
         if (dev->read_frames != 0) {
             WaitForPoll();
         }
         return 0;
     }
-
 
    // Note: Access to PulseAudio data from our sound thread requires locking the threaded mainloop.
     if (dev->read_frames == 0) {		// non-blocking: read available frames
@@ -947,7 +951,7 @@ PyObject * quisk_pa_sound_devices(PyObject * self, PyObject * args)
 	PyList_Append(pylist, pycapt);
 	PyList_Append(pylist, pyplay);
     
-    printf("Starting name loop\n");
+    //printf("Starting name loop\n");
 
 	// Create a mainloop API and connection to the default server
 	pa_names_ml = pa_mainloop_new();
@@ -1009,6 +1013,6 @@ PyObject * quisk_pa_sound_devices(PyObject * self, PyObject * args)
 			break;
 		}
 	}
-    printf("Finished with name loop\n");
+    //printf("Finished with name loop\n");
 	return pylist;
 }

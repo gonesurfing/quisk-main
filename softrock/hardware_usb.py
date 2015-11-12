@@ -70,11 +70,14 @@ class Hardware(BaseHardware):
           ver = "%d.%d" % (ret[1], ret[0])
         else:
           ver = 'unknown'
-        text = 'Capture from SoftRock USB on %s, Firmware %s' % (self.conf.name_of_sound_capt , ver)
+        sound = self.conf.name_of_sound_capt
+        if len(sound) > 50:
+          sound = sound[0:30] + '|||' + sound[-17:]
+        text = 'Capture from SoftRock USB on %s, Firmware %s' % (sound, ver)
         if self.conf.name_of_mic_play and self.conf.key_poll_msec:
           self.key_thread = KeyThread(usb_dev, self.conf.key_poll_msec / 1000.0, self.conf.key_hang_time)
           self.key_thread.start()
-    self.application.bottom_widgets.info_text.SetLabel(text)
+    #self.application.bottom_widgets.info_text.SetLabel(text)
     if DEBUG:
       print ('Startup freq', self.GetStartupFreq())
       print ('Run freq', self.GetFreq())

@@ -24,6 +24,8 @@ import serial			# From the pyserial package
 from n2adr.quisk_conf import *
 from n2adr import scanner_widgets as quisk_widgets
 
+settings_file_path = "../quisk_settings.json"
+
 bandLabels = [ ('60',) * 5, '40', '20',
 	'15', '12', '10', '2', '220', '440', '900', '1240', ('Time',) * len(bandTime)]
 

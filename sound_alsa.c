@@ -366,7 +366,7 @@ void quisk_play_alsa(struct sound_dev * playdev, int nSamples,
 }
 
 static int device_list(PyObject * py, snd_pcm_stream_t stream, char * name)
-{	// retern 1 if the card name was substituted
+{	// return 1 if the card name was substituted
 	snd_ctl_t *handle;
 	int card, err, dev;
 	char buf100[100];
@@ -415,12 +415,11 @@ static int device_list(PyObject * py, snd_pcm_stream_t stream, char * name)
 				if ( ! pcm_text || ! pcm_text[0])
 					pcm_text = snd_pcm_info_get_id(pcminfo);
 			}
+			snprintf(buf100, 100, "%s %s (hw:%d,%d)", card_text, pcm_text, card, dev);
 			if (py) {		// add to list of devices
-				snprintf(buf100, 100, "%s %s (hw:%d,%d)", card_text, pcm_text, card, dev);
 				PyList_Append(py, PyString_FromString(buf100));
 			}
 			if (name) {		// return the "hw:" name
-				snprintf(buf100, 100, "%s %s", card_text, pcm_text);
 				if (strstr(buf100, name)) {
 					snprintf(name, QUISK_SC_SIZE, "hw:%d,%d", card, dev);
 					snd_ctl_close(handle);

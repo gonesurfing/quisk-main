@@ -21,6 +21,7 @@ class Hardware(BaseHw):
     return BaseHw.open(self)
   def close(self):
     self.anttuner.close()
+    self.controlbox.close()
     return BaseHw.close(self)
   def OnAntTuner(self, text):	# One of the tuner buttons was pressed
     self.anttuner.OnAntTuner(text)

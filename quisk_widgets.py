@@ -330,6 +330,7 @@ class QuiskButtons:
       dc.SetFont(self.GetFont())
       label = self.GetLabel()
       tw, th = dc.GetTextExtent(label)
+      self.label_width = tw
       dx = dy = self.labelDelta
       slabel = re.split('('+unichr(0x25CF)+')', label)	# unicode symbol for record: a filled dot
       for part in slabel:		# This code makes the symbol red.  Thanks to Christof, DJ4CM.
@@ -346,6 +347,37 @@ class QuiskButtons:
     pass
   def OnKeyUp(self, event):
     pass
+  def DrawGlyphAdj(self, dc, width, height):	# Add an adjustment indicator to the label
+    if not conf.decorate_buttons:
+      return
+    wd, ht = dc.GetTextExtent('X')
+    wd = wd * 12 / 10
+    wd = wd + wd % 2
+    b = self.bezelWidth + 1
+    dc.SetPen(wx.Pen(conf.color_enable, 1, wx.SOLID))
+    if self.GetValue():
+      dc.SetBrush(wx.Brush(self.color, wx.SOLID))
+    else:
+      dc.SetBrush(wx.Brush(conf.color_btn, wx.SOLID))
+    x1 = width - wd * 2
+    dc.DrawRoundedRectangle(x1, b, wd, height - b * 2, 6)
+    x1 = x1 + 2
+    y1 = height // 2
+    x2 = x1 + wd - 4
+    dc.DrawLine(  x1,   y1,   x2,   y1)
+    dc.DrawLine(x1+2, y1-1, x2-2, y1-1)
+    dc.DrawLine(x1+2, y1+1, x2-2, y1+1)
+  def DrawGlyphCycle(self, dc, width, height):	# Add a cycle indicator to the label
+    if not conf.decorate_buttons:
+      return
+    uch = conf.btn_text_cycle
+    wd, ht = dc.GetTextExtent(uch)
+    if wd * 2 + self.label_width > width:		# not enough space
+      uch = conf.btn_text_cycle_small
+      wd, ht = dc.GetTextExtent(uch)
+      dc.DrawText(uch, width - wd, (height - ht) // 2)
+    else:
+      dc.DrawText(uch, width - wd * 15 // 10, (height - ht) // 2)
 
 class QuiskPushbutton(QuiskButtons, wx.lib.buttons.GenButton):
   """A plain push button widget."""
@@ -535,6 +567,9 @@ class QuiskFilterButton(QuiskCheckbutton):
       self.adjust = None
     else:
       self.adjust = QFilterButtonWindow(self)
+  def DrawLabel(self, dc, width, height, dx=0, dy=0):
+    QuiskButtons.DrawLabel(self, dc, width, height, dx, dy)
+    self.DrawGlyphAdj(dc, width, height)
 
 class QSliderButtonWindow(wx.Frame):
   """Create a window with controls for the button"""
@@ -629,7 +664,10 @@ class QuiskSliderButton(QuiskCheckbutton):
       self.adjust.Destroy()
       self.adjust = None
     QuiskCheckbutton.OnButton(self, event)
-
+  def DrawLabel(self, dc, width, height, dx=0, dy=0):
+    QuiskButtons.DrawLabel(self, dc, width, height, dx, dy)
+    self.DrawGlyphAdj(dc, width, height)
+    
 class QuiskSpotButton(QuiskSliderButton):
   def SetLabel(self, text=None):
     if text is None:
@@ -710,6 +748,21 @@ class QuiskCycleCheckbutton(QuiskCheckbutton):
       self.direction = 1
       if self.command:
         self.command(event)
+  def DrawLabel(self, dc, width, height, dx=0, dy=0):
+    QuiskButtons.DrawLabel(self, dc, width, height, dx, dy)
+    self.DrawGlyphCycle(dc, width, height)
+
+class QuiskCycleMenuButton(QuiskCycleCheckbutton):
+  """A cycle check button that can be right-clicked to configure."""
+  def __init__(self, parent, menu, command, labels, color=None, is_radio=False):
+    QuiskCycleCheckbutton.__init__(self, parent, command, labels, color, is_radio)
+    self.menu = menu
+  def OnRightDown(self, event):
+    pos = event.GetPosition()
+    self.PopupMenu(self.menu, pos)
+  def DrawLabel(self, dc, width, height, dx=0, dy=0):
+    QuiskButtons.DrawLabel(self, dc, width, height, dx, dy)
+    self.DrawGlyphAdj(dc, width, height)
 
 class RadioButtonGroup:
   """This class encapsulates a group of radio buttons.  This class is not a button!

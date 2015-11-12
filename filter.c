@@ -14,7 +14,7 @@ void quisk_filt_cInit(struct quisk_cFilter * filter, double * coefs, int taps)
 	memset(filter->cSamples, 0, taps * sizeof(complex double));
 	filter->ptcSamp = filter->cSamples;
 	filter->nTaps = taps;
-	filter->counter = 0;
+	filter->decim_index = 0;
 	filter->cBuf = NULL;
 	filter->nBuf = 0;
 }
@@ -27,7 +27,7 @@ void quisk_filt_dInit(struct quisk_dFilter * filter, double * coefs, int taps)
 	memset(filter->dSamples, 0, taps * sizeof(double));
 	filter->ptdSamp = filter->dSamples;
 	filter->nTaps = taps;
-	filter->counter = 0;
+	filter->decim_index = 0;
 	filter->dBuf = NULL;
 	filter->nBuf = 0;
 }
@@ -181,8 +181,8 @@ int quisk_cDecimate(complex double * cSamples, int count, struct quisk_cFilter *
 	nOut = 0;
 	for (i = 0; i < count; i++) {
 		*filter->ptcSamp = cSamples[i];
-		if (++filter->counter >= decim) {
-			filter->counter = 0;		// output a sample
+		if (++filter->decim_index >= decim) {
+			filter->decim_index = 0;		// output a sample
 			csample = 0;
 			ptSample = filter->ptcSamp;
 			ptCoef = filter->dCoefs;
@@ -209,8 +209,8 @@ int quisk_dDecimate(double * dSamples, int count, struct quisk_dFilter * filter,
 	nOut = 0;
 	for (i = 0; i < count; i++) {
 		*filter->ptdSamp = dSamples[i];
-		if (++filter->counter >= decim) {
-			filter->counter = 0;		// output a sample
+		if (++filter->decim_index >= decim) {
+			filter->decim_index = 0;		// output a sample
 			dsample = 0;
 			ptSample = filter->ptdSamp;
 			ptCoef = filter->dCoefs;
@@ -223,6 +223,44 @@ int quisk_dDecimate(double * dSamples, int count, struct quisk_dFilter * filter,
 		}
 		if (++filter->ptdSamp >= filter->dSamples + filter->nTaps)
 			filter->ptdSamp = filter->dSamples;
+	}
+	return nOut;
+}
+
+int quisk_cInterpDecim(complex double * cSamples, int count, struct quisk_cFilter * filter, int interp, int decim)
+{	// Interpolate by interp, and then decimate by decim.
+	// This uses the double coefficients of filter (not the complex).  Samples are complex.
+	int i, k, nOut;
+	double * ptCoef;
+	complex double * ptSample;
+	complex double csample;
+
+	if (count > filter->nBuf) {	// increase size of sample buffer
+		filter->nBuf = count * 2;
+		if (filter->cBuf)
+			free(filter->cBuf);
+		filter->cBuf = (complex double *)malloc(filter->nBuf * sizeof(complex double));
+	}
+	memcpy(filter->cBuf, cSamples, count * sizeof(complex double));
+	nOut = 0;
+	for (i = 0; i < count; i++) {
+		// Put samples into buffer left to right.  Use samples right to left.
+		*filter->ptcSamp = filter->cBuf[i];
+		while (filter->decim_index < interp) {
+			ptSample = filter->ptcSamp;
+			ptCoef = filter->dCoefs + filter->decim_index;
+			csample = 0;
+			for (k = 0; k < filter->nTaps / interp; k++, ptCoef += interp) {
+				csample += *ptSample  *  *ptCoef;
+				if (--ptSample < filter->cSamples)
+					ptSample = filter->cSamples + filter->nTaps - 1;
+			}
+			cSamples[nOut++] = csample * interp;
+			filter->decim_index += decim;
+		}
+		if (++filter->ptcSamp >= filter->cSamples + filter->nTaps)
+			filter->ptcSamp = filter->cSamples;
+		filter->decim_index = filter->decim_index - interp;
 	}
 	return nOut;
 }

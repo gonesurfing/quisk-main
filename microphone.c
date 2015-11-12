@@ -585,10 +585,7 @@ static int tx_filter_freedv(complex double * filtered, int count, int encode)
 		dsamples[i] = dsamples[i] * CLIP16;
 	}
 	if (encode && pt_quisk_freedv_tx)   // Encode audio into digital modulation
-		count = (* pt_quisk_freedv_tx)(dsamples, count);
-	// FIR bandpass filter; separate into I and Q
-	for (i = 0; i < count; i++)
-		filtered[i] = quisk_dC_out(dsamples[i], &filter2);
+		count = (* pt_quisk_freedv_tx)(filtered, dsamples, count);
 	// Interpolate up to 48000
 	if (MIC_OUT_RATE != sample_rate)
 		count = quisk_cInterpolate(filtered, count, &cfiltInterp, MIC_OUT_RATE / sample_rate);

@@ -13,7 +13,7 @@ class BottomWidgets:	# Add extra widgets to the bottom of the screen
     self.config = conf
     self.hardware = hardware
     self.application = app
-    row = 4			# The next available row
+    row = app.widget_row			# The next available row
     b = app.QuiskCycleCheckbutton(frame, self.OnAntTuner, ('Antenna', 'Ant 0', 'Ant 1'))
     bw, bh = b.GetMinSize()
     gbs.Add(b, (row, 0), (1, 2), flag=wx.EXPAND)

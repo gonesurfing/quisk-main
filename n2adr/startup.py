@@ -21,7 +21,9 @@ Choices = [
 (' AOR AR8600 with IF to SDR-IQ', 'quisk_conf_sdr8600.py', 'n2adr/conf2.py'),
 (' Fldigi with my transceiver', 'n2adr/quisk_conf.py', 'n2adr/conf5.py'),
 (' Freedv.org Rx with my transceiver', 'n2adr/quisk_conf.py', 'n2adr/conf7.py'),
-(' HermesLite', 'hermes/quisk_conf.py', 'n2adr/conf3.py'),
+(' Hermes-Lite', 'hermes/quisk_conf.py', 'n2adr/conf3.py'),
+(' Odyssey', 'odyssey/quisk_conf.py', 'n2adr/conf1.py'),
+(' My Transceiver to Hermes-Lite', 'Quisk2Hermes', ''),
 ]
 
 if sys.platform == 'win32':
@@ -60,10 +62,14 @@ class ListBoxFrame(wx.Frame):
     lb = event.GetEventObject()
     index = lb.GetSelection()
     text, conf1, conf2 = Choices[index]
-    cmd = [exe, 'quisk.py', '-c', conf1]
-    if conf2:
-      cmd = cmd + ['--config2', conf2]
-    subprocess.Popen(cmd)
+    if conf1 == "Quisk2Hermes":
+      subprocess.Popen([exe, 'quisk.py', '-c', 'n2adr/quisk_conf.py', '--local', 'Q2H'])
+      subprocess.Popen([exe, 'quisk.py', '-c', 'hermes/quisk_conf.py', '--config2', 'n2adr/conf3A.py', '--local', 'Q2H'])
+    else:
+      cmd = [exe, 'quisk.py', '-c', conf1]
+      if conf2:
+        cmd = cmd + ['--config2', conf2]
+      subprocess.Popen(cmd)
     self.Destroy()
   def OnChar(self, event):
     if event.GetKeyCode() == 13:

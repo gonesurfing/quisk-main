@@ -24,6 +24,12 @@ class ControlBox:	# Control my station control box
     self.have_data = 'C\000'
     self.want_data = self.have_data
     self.timer = 0
+  def close(self):
+    self.want_data = 'C\000'	# raise key if down
+    if self.have_data != self.want_data:
+      self.socket.send(self.want_data)
+      time.sleep(0.1)
+      self.socket.send(self.want_data)
   def OnButtonPTT(self, event):
     btn = event.GetEventObject()
     if btn.GetValue():		# Turn the software key bit on or off
@@ -333,7 +339,7 @@ class AntennaTuner:     # Control my homebrew antenna tuner and my KI8BV dipole
     self.socket.setblocking(0)
     self.socket.connect(self.address)
     if self.is_vna:
-      self.GUI = AntTunerGUI(self, self.application)
+      self.GUI = AntTunerGUI(self, self.application, self.conf)
       self.GUI.Show()
   def close(self):
     pass
@@ -412,7 +418,7 @@ class AntennaTuner:     # Control my homebrew antenna tuner and my KI8BV dipole
       pass
 
 class AntTunerGUI(wx.Frame):    # Display a control window for my antenna tuner
-  def __init__(self, anttuner, app):
+  def __init__(self, anttuner, app, conf):
     wx.Frame.__init__(self, app.main_frame, title="Antenna Tuner Control",
        style=wx.STAY_ON_TOP|wx.CAPTION)
     self.anttuner = anttuner

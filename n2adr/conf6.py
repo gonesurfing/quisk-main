@@ -4,6 +4,8 @@ from n2adr.quisk_conf import n2adr_sound_pc_capt, n2adr_sound_pc_play, n2adr_sou
 from n2adr.quisk_conf import latency_millisecs, data_poll_usec, favorites_file_path
 from n2adr.quisk_conf import mixer_settings
 
+settings_file_path = "../quisk_settings.json"
+
 name_of_sound_capt = n2adr_sound_pc_capt
 name_of_sound_play = n2adr_sound_usb_play
 

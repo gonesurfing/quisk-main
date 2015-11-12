@@ -36,12 +36,15 @@ from types import *
 from quisk_widgets import *
 from filters import Filters
 import dxcluster
+configure = None ##import configure
 
 # Fldigi XML-RPC control opens a local socket.  If socket.setdefaulttimeout() is not
 # called, the timeout on Linux is zero (1 msec) and on Windows is 2 seconds.  So we
 # call it to insure consistent behavior.
 import socket
 socket.setdefaulttimeout(0.005)
+
+application = None
 
 # Command line parsing: be able to specify the config file.
 from optparse import OptionParser
@@ -50,27 +53,47 @@ parser.add_option('-c', '--config', dest='config_file_path',
 		help='Specify the configuration file path')
 parser.add_option('', '--config2', dest='config_file_path2', default='',
 		help='Specify a second configuration file to read after the first')
+parser.add_option('-a', '--ask', action="store_true", dest='AskMe', default=False,
+		help='Ask which radio to use when starting')
+parser.add_option('', '--local', dest='local_option', default='',
+		help='Specify a custom option that you have programmed yourself')
 argv_options = parser.parse_args()[0]
 ConfigPath = argv_options.config_file_path	# Get config file path
 ConfigPath2 = argv_options.config_file_path2
-if not ConfigPath:	# Use default path
-  if sys.platform == 'win32':
-    path = os.getenv('HOMEDRIVE', '') + os.getenv('HOMEPATH', '')
-    for dir in ("Documents", "My Documents", "Eigene Dateien", "Documenti", "Mine Dokumenter"):
-      ConfigPath = os.path.join(path, dir)
-      if os.path.isdir(ConfigPath):
-        break
-    else:
-      ConfigPath = os.path.join(path, "My Documents")
-    ConfigPath = os.path.join(ConfigPath, "quisk_conf.py")
-    if not os.path.isfile(ConfigPath):	# See if the user has a config file
-      try:
-        import shutil	# Try to create an initial default config file
-        shutil.copyfile('quisk_conf_win.py', ConfigPath)
-      except:
-        pass
+LocalOption = argv_options.local_option
+if sys.platform == 'win32':
+  path = os.getenv('HOMEDRIVE', '') + os.getenv('HOMEPATH', '')
+  for dir in ("Documents", "My Documents", "Eigene Dateien", "Documenti", "Mine Dokumenter"):
+    config_dir = os.path.join(path, dir)
+    if os.path.isdir(config_dir):
+      break
   else:
-    ConfigPath = os.path.expanduser('~/.quisk_conf.py')
+    config_dir = os.path.join(path, "My Documents")
+  try:
+    import _winreg
+    key = _winreg.OpenKey(_winreg.HKEY_CURRENT_USER,
+       r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders")
+    val = _winreg.QueryValueEx(key, "Personal")
+    val = _winreg.ExpandEnvironmentStrings(val[0])
+    _winreg.CloseKey(key)
+    if os.path.isdir(val):
+      DefaultConfigDir = val
+    else:
+      DefaultConfigDir = config_dir
+  except:
+    traceback.print_exc()
+    DefaultConfigDir = config_dir
+  if not ConfigPath:
+    ConfigPath = os.path.join(DefaultConfigDir, "quisk_conf.py")
+    if not os.path.isfile(ConfigPath):
+      path = os.path.join(config_dir, "quisk_conf.py")
+      if os.path.isfile(path):
+        ConfigPath = path
+  del config_dir
+else:
+  DefaultConfigDir = os.path.expanduser('~')
+  if not ConfigPath:
+    ConfigPath = os.path.join(DefaultConfigDir, ".quisk_conf.py")
 
 # These FFT sizes have multiple small factors, and are prefered for efficiency:
 fftPreferedSizes = (416, 448, 480, 512, 576, 640, 672, 704, 768, 800, 832,
@@ -357,7 +380,7 @@ class HamlibHandler:
     else:
       self.app.splitButton.SetValue(split, True)
   def GetInfo(self):
-    self.Reply("Info", self.app.main_frame.GetTitle(), 0)
+    self.Reply("Info", self.app.main_frame.title, 0)
   def GetMode(self):
     mode = self.app.mode
     if mode == 'CWU':
@@ -448,15 +471,17 @@ class ConfigScreen(wx.Panel):
   def __init__(self, parent, width, fft_size):
     self.y_scale = 0
     self.y_zero = 0
+    self.finish_pages = True
+    self.width = width
     wx.Panel.__init__(self, parent)
     self.notebook = notebook = wx.Notebook(self)
     self.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self.OnPageChanged)
-    notebook.SetBackgroundColour(conf.color_graph)
-    self.SetBackgroundColour(conf.color_config2)
+    va = notebook.GetClassDefaultAttributes()
+    notebook.tfg_color = va.colFg	# use for text foreground
+    notebook.bg_color = va.colBg
     font = wx.Font(conf.config_font_size, wx.FONTFAMILY_SWISS, wx.NORMAL,
           wx.FONTWEIGHT_NORMAL, face=conf.quisk_typeface)
     notebook.SetFont(font)
-    notebook.SetForegroundColour(conf.color_notebook_txt)
     sizer = wx.BoxSizer()
     sizer.Add(notebook, 1, wx.EXPAND)
     self.SetSizer(sizer)
@@ -472,6 +497,10 @@ class ConfigScreen(wx.Panel):
     self.tx_audio = ConfigTxAudio(notebook, width)
     notebook.AddPage(self.tx_audio, "Tx Audio")
     self.tx_audio.status = self.status
+  def FinishPages(self):
+    if self.finish_pages:
+      self.finish_pages = False
+      if configure: application.local_conf.AddPages(self.notebook, self.width)
   def ChangeYscale(self, y_scale):
     pass
   def ChangeYzero(self, y_zero):
@@ -491,13 +520,16 @@ class ConfigScreen(wx.Panel):
     else:
       tab = self.notebook.GetSelection()
 
-class ConfigStatus(wx.Panel):
+class ConfigStatus(wx.ScrolledWindow):
   """Display the status screen."""
   def __init__(self, parent, width, fft_size):
-    wx.Panel.__init__(self, parent)
+    wx.ScrolledWindow.__init__(self, parent)
     self.Bind(wx.EVT_PAINT, self.OnPaint)
+    self.bg_color = parent.bg_color
+    self.tfg_color = parent.tfg_color
     self.width = width
     self.fft_size = fft_size
+    self.scroll_height = None
     self.interupts = 0
     self.read_error = -1
     self.write_error = -1
@@ -530,6 +562,7 @@ class ConfigStatus(wx.Panel):
   def MakeTabstops(self):
     luse = lname = 0
     for use, name, rate, latency, errors in QS.sound_errors():
+      name = self.TrimName(name)
       w, h = self.GetTextExtent(use)
       luse = max(luse, w)
       w, h = self.GetTextExtent(name)
@@ -543,11 +576,16 @@ class ConfigStatus(wx.Panel):
     self.tabstops2[2] = x = x + lname + self.GetTextExtent("Sample rateXXXXXX")[0]
     self.tabstops2[3] = x = x + charx * 12
     self.tabstops2[4] = x = x + charx * 12
+  def TrimName(self, name):
+    if len(name) > 50:
+      name = name[0:30] + '|||' + name[-17:]
+    return name
   def OnPaint(self, event):
     # Make and blit variable data
     self.MakeBitmap()
     dc = wx.PaintDC(self)
-    dc.Blit(0, 0, self.mem_width, self.mem_height, self.mem_dc, 0, 0)
+    x, y = self.GetViewStart()
+    dc.Blit(0, 0, self.mem_width, self.mem_height, self.mem_dc, x, y)
   def MakeRow2(self, *args):
     for col in range(len(args)):
       t = args[col]
@@ -561,7 +599,7 @@ class ConfigStatus(wx.Panel):
       if "Error" in t and t != "Errors":
         self.mem_dc.SetTextForeground('Red')
         self.mem_dc.DrawText(t, x, self.mem_y)
-        self.mem_dc.SetTextForeground(conf.color_graphlabels)
+        self.mem_dc.SetTextForeground(self.tfg_color)
       else:
         self.mem_dc.DrawText(t, x, self.mem_y)
     self.mem_y += self.dy
@@ -572,10 +610,10 @@ class ConfigStatus(wx.Panel):
     self.mem_dc = wx.MemoryDC()
     self.mem_rect = wx.Rect(0, 0, self.mem_width, self.mem_height)
     self.mem_dc.SelectObject(self.bitmap)
-    br = wx.Brush(conf.color_graph)
+    br = wx.Brush(self.bg_color)
     self.mem_dc.SetBackground(br)
     self.mem_dc.SetFont(self.font)
-    self.mem_dc.SetTextForeground(conf.color_graphlabels)
+    self.mem_dc.SetTextForeground(self.tfg_color)
     self.mem_dc.Clear()
   def MakeBitmap(self):
     self.mem_dc.Clear()
@@ -585,7 +623,7 @@ class ConfigStatus(wx.Panel):
     if conf.config_file_exists:
       cfile = "Configuration file:  %s" % conf.config_file_path
     else:
-      cfile = "Error: Configuration file not found %s" % conf.config_file_path
+      cfile = "Configuration file not found %s" % conf.config_file_path
     if conf.microphone_name:
       level = "%3.0f" % self.mic_max_display
     else:
@@ -622,7 +660,10 @@ class ConfigStatus(wx.Panel):
     elif conf.use_rx_udp:
       self.MakeRow2("Capture radio samples", "UDP", application.sample_rate, self.latencyCapt, self.read_error)
     for use, name, rate, latency, errors in QS.sound_errors():
-      self.MakeRow2(use, name, rate, latency, errors)
+      self.MakeRow2(use, self.TrimName(name), rate, latency, errors)
+    if self.scroll_height is None:
+      self.scroll_height = self.mem_y + self.dy
+      self.SetScrollbars(1, 1, 100, self.scroll_height)
   def OnGraphData(self, data=None):
     if not self.tabstops2:      # Must wait for sound to start
       self.MakeTabstops()
@@ -631,16 +672,14 @@ class ConfigStatus(wx.Panel):
          self.read_error, self.write_error, self.underrun_error,
          self.latencyCapt, self.latencyPlay, self.interupts, self.fft_error, self.mic_max_display,
          self.data_poll_usec
-	 ) = QS.get_state()
+     ) = QS.get_state()
     self.mic_max_display = 20.0 * math.log10((self.mic_max_display + 1) / 32767.0)
     self.RefreshRect(self.mem_rect)
 
-class ConfigConfig(wx.Panel):
+class ConfigConfig(wx.ScrolledWindow):
   def __init__(self, parent, width):
-    wx.Panel.__init__(self, parent)
+    wx.ScrolledWindow.__init__(self, parent)
     self.width = width
-    self.SetBackgroundColour(conf.color_graph)
-    self.SetForegroundColour(conf.color_graphlabels)
     self.font = wx.Font(conf.config_font_size, wx.FONTFAMILY_SWISS, wx.NORMAL,
           wx.FONTWEIGHT_NORMAL, face=conf.quisk_typeface)
     self.SetFont(self.font)
@@ -705,6 +744,7 @@ class ConfigConfig(wx.Panel):
       level = int(conf.mic_out_volume * 100.0 + 0.1)
       SliderBoxH(self, "SftRock Tx level %d%%  ", level, 0, 100, self.OnSrTxLevel, True, (tab0, self.y), tab2-tab0)
       self.y += self.dy
+    self.scroll_height = self.y
     # Make controls SECOND column
     self.y = self.yyy
     # File for recording speaker audio
@@ -733,6 +773,10 @@ class ConfigConfig(wx.Panel):
     self.static_fplay = wx.StaticText(self, -1, self.static_fplay_text + self.static_fplay_path, pos=(tab4, self.y))
     self.y += self.dy
     SliderBoxH(self, "Repeat secs %.1f  ", 0, 0, 100, self.OnPlayFileRepeat, True, (tab4, self.y), tab2-tab0, 0.1)
+    self.y += self.dy
+    if self.y > self.scroll_height:
+      self.scroll_height = self.y
+    self.SetScrollbars(1, 1, 100, self.scroll_height)
   def OnTxLevel(self, event):
     application.tx_level = event.GetEventObject().GetValue()
     Hardware.SetTxLevel()
@@ -801,7 +845,7 @@ class ConfigSound(wx.ScrolledWindow):
     self.Bind(wx.EVT_PAINT, self.OnPaint)
     self.width = width
     self.dev_capt, self.dev_play = QS.sound_devices()
-    self.SetBackgroundColour(conf.color_graph)
+    self.tfg_color = parent.tfg_color
     self.font = wx.Font(conf.config_font_size, wx.FONTFAMILY_SWISS, wx.NORMAL,
           wx.FONTWEIGHT_NORMAL, face=conf.quisk_typeface)
     self.SetFont(self.font)
@@ -816,7 +860,7 @@ class ConfigSound(wx.ScrolledWindow):
     dc = wx.PaintDC(self)
     self.DoPrepareDC(dc)
     dc.SetFont(self.font)
-    dc.SetTextForeground(conf.color_graphlabels)
+    dc.SetTextForeground(self.tfg_color)
     x0 = self.charx
     self.y = self.chary // 3
     dc.DrawText("Available devices for capture:", x0, self.y)
@@ -856,8 +900,6 @@ class ConfigFavorites(wx.grid.Grid):
     wx.grid.Grid.__init__(self, parent)
     self.changed = False
     self.RepeaterDict = {}
-    self.SetBackgroundColour(conf.color_graph)
-    self.SetForegroundColour(conf.color_graphlabels)
     font = wx.Font(conf.favorites_font_size, wx.FONTFAMILY_SWISS, wx.NORMAL,
           wx.FONTWEIGHT_BOLD, face=conf.quisk_typeface)
     self.SetFont(font)
@@ -865,13 +907,9 @@ class ConfigFavorites(wx.grid.Grid):
     font = wx.Font(conf.favorites_font_size, wx.FONTFAMILY_SWISS, wx.NORMAL,
           wx.FONTWEIGHT_NORMAL, face=conf.quisk_typeface)
     self.SetDefaultCellFont(font)
-    self.SetDefaultCellBackgroundColour(conf.color_graph)
-    self.SetDefaultCellTextColour(conf.color_graphlabels)
-    self.SetLabelBackgroundColour(conf.color_graph)
-    self.SetLabelTextColour(conf.color_graphlabels)
-    self.SetGridLineColour(conf.color_graphlabels)
     self.SetDefaultRowSize(self.GetCharHeight()+3)
     self.Bind(wx.grid.EVT_GRID_LABEL_RIGHT_CLICK, self.OnRightClickLabel)
+    self.Bind(wx.grid.EVT_GRID_LABEL_LEFT_CLICK, self.OnLeftClickLabel)
     self.Bind(wx.grid.EVT_GRID_CELL_CHANGE, self.OnChange)
     self.Bind(wx.grid.EVT_GRID_LABEL_LEFT_DCLICK, self.OnLeftDClick)
     self.CreateGrid(0, 6)
@@ -991,9 +1029,12 @@ class ConfigFavorites(wx.grid.Grid):
     if self.menurow >= 0:
       pos = event.GetPosition()
       self.PopupMenu(self.popupmenu, pos)
+  def OnLeftClickLabel(self, event):
+    pass
   def OnLeftDClick(self, event):		# Thanks to Christof, DJ4CM
     self.menurow = event.GetRow()
-    self.OnPopupTuneto(event)
+    if self.menurow >= 0:
+      self.OnPopupTuneto(event)
   def OnPopupAppend(self, event):
     self.InsertRows(self.menurow + 1)
     self.SetCellEditor(self.menurow + 1, 2, wx.grid.GridCellChoiceEditor(self.mode_names, True))
@@ -1074,13 +1115,11 @@ class ConfigFavorites(wx.grid.Grid):
     if self.changed:
       self.WriteOut()
 
-class ConfigTxAudio(wx.Panel):
+class ConfigTxAudio(wx.ScrolledWindow):
   """Display controls for the transmit audio."""
   def __init__(self, parent, width):
-    wx.Panel.__init__(self, parent)
+    wx.ScrolledWindow.__init__(self, parent)
     self.width = width
-    self.SetBackgroundColour(conf.color_graph)
-    self.SetForegroundColour(conf.color_graphlabels)
     self.font = wx.Font(conf.config_font_size, wx.FONTFAMILY_SWISS, wx.NORMAL,
           wx.FONTWEIGHT_NORMAL, face=conf.quisk_typeface)
     self.SetFont(self.font)
@@ -1137,6 +1176,7 @@ class ConfigTxAudio(wx.Panel):
     t = "Tx audio preemphasis of high frequencies."
     wx.StaticText(self, -1, t, pos=(tab2, self.y))
     self.y += self.dy
+    self.SetScrollbars(1, 1, 100, self.y)
   def OnGraphData(self, data=None):
     if conf.microphone_name:
       txt = "Peak microphone audio level %3.0f dB" % self.status.mic_max_display
@@ -1196,7 +1236,7 @@ class GraphDisplay(wx.Window):
     self.backgroundPen = wx.Pen(self.GetBackgroundColour(), 1)
     self.backgroundBrush = wx.Brush(self.GetBackgroundColour())
     self.horizPen = wx.Pen(conf.color_gl, 1, wx.SOLID)
-    self.font = wx.Font(conf.graph_font_size, wx.FONTFAMILY_SWISS, wx.NORMAL,
+    self.font = wx.Font(conf.graph_msg_font_size, wx.FONTFAMILY_SWISS, wx.NORMAL,
           wx.FONTWEIGHT_NORMAL, face=conf.quisk_typeface)
     self.SetFont(self.font)
     if sys.platform == 'win32':
@@ -1236,8 +1276,10 @@ class GraphDisplay(wx.Window):
       dc.DrawLine(0, y, self.graph_width, y)	# y line
     if self.display_text:
       dc.SetFont(self.font)
-      dc.SetTextForeground(conf.color_graphlabels)
-      dc.DrawText(self.display_text, self.chary, self.chary)
+      dc.SetTextBackground(conf.color_graph_msg_bg)
+      dc.SetTextForeground(conf.color_graph_msg_fg)
+      dc.SetBackgroundMode(wx.SOLID)
+      dc.DrawText(self.display_text, 0, 0)
   def SetHeight(self, height):
     self.height = height
     self.SetSize((self.graph_width, height))
@@ -1365,6 +1407,13 @@ class GraphScreen(wx.Window):
   def MakeDisplay(self):
     self.display = GraphDisplay(self, self.originX, 0, self.graph_width, 5, self.chary)
     self.display.zeroDB = self.zeroDB
+  def SetDisplayMsg(self, text=''):
+    self.display.display_text = text
+    self.display.Refresh()
+  def ScrollMsg(self, chars):	# Add characters to a scrolling message
+    self.display.display_text = self.display.display_text + chars
+    self.display.display_text = self.display.display_text[-50:]
+    self.display.Refresh()
   def OnPaint(self, event):
     dc = wx.PaintDC(self)
     dc.SetFont(self.font)
@@ -1948,10 +1997,9 @@ class WaterfallDisplay(wx.Window):
       l = int((x - gain + y_zero // 3 + 100) * y_scale / 10)
       l = max(l, 0)
       l = min(l, 255)
-      row = row + "%c%c%c" % (chr(self.red[l]), chr(self.green[l]), chr(self.blue[l]))
+      row = row + "%c%c%c%c" % (chr(self.red[l]), chr(self.green[l]), chr(self.blue[l]), chr(255))
     #T('graph string')
-    # Perhaps use 4-byte pixels and BitmapFromBufferRGBA()
-    bmp = wx.BitmapFromBuffer(len(row) // 3, 1, row)
+    bmp = wx.BitmapFromBufferRGBA(len(row) // 4, 1, row)
     bmp.x_origin = int(float(self.VFO) / sample_rate * self.data_width + 0.5)
     self.bitmaps.insert(0, bmp)
     del self.bitmaps[-1]
@@ -1987,6 +2035,10 @@ class WaterfallScreen(wx.SplitterWindow):
     self.pane1 = GraphScreen(self, data_width, graph_width, 1)
     self.pane2 = WaterfallPane(self, data_width, graph_width)
     self.SplitHorizontally(self.pane1, self.pane2, conf.waterfall_graph_size)
+  def SetDisplayMsg(self, text=''):
+    self.pane1.SetDisplayMsg(text)
+  def ScrollMsg(self, char):	# Add a character to a scrolling message
+    self.pane1.ScrollMsg(char)
   def OnIdle(self, event):
     self.pane1.OnIdle(event)
     self.pane2.OnIdle(event)
@@ -2266,9 +2318,11 @@ class QMainFrame(wx.Frame):
   """Create the main top-level window."""
   def __init__(self, width, height):
     fp = open('__init__.py')		# Read in the title
-    title = fp.readline().strip()[1:]
+    self.title = fp.readline().strip()[1:]
     fp.close()
-    wx.Frame.__init__(self, None, -1, title, wx.DefaultPosition,
+    x = conf.window_posX
+    y = conf.window_posY
+    wx.Frame.__init__(self, None, -1, self.title, (x, y),
         (width, height), wx.DEFAULT_FRAME_STYLE, 'MainFrame')
     self.SetBackgroundColour(conf.color_bg)
     self.SetForegroundColour(conf.color_bg_txt)
@@ -2276,6 +2330,10 @@ class QMainFrame(wx.Frame):
   def OnBtnClose(self, event):
     application.OnBtnClose(event)
     self.Destroy()
+  def SetConfigText(self, text):
+    if len(text) > 100:
+      text = text[0:80] + '|||' + text[-17:]
+    self.SetTitle(self.title + '   ' + text)
 
 ## Note: The new amplitude/phase adjustments have ideas provided by Andrew Nilsson, VK6JBL
 class QAdjustPhase(wx.Frame):
@@ -2470,6 +2528,7 @@ class App(wx.App):
     self.init_path = None
     self.bottom_widgets = None
     self.dxCluster = None
+    self.startup_quisk = True
     if sys.stdout.isatty():
       wx.App.__init__(self, redirect=False)
     else:
@@ -2497,6 +2556,7 @@ class App(wx.App):
     global conf		# conf is the module for all configuration data
     import quisk_conf_defaults as conf
     setattr(conf, 'config_file_path', ConfigPath)
+    setattr(conf, 'DefaultConfigDir', DefaultConfigDir)
     if os.path.isfile(ConfigPath):	# See if the user has a config file
       setattr(conf, 'config_file_exists', True)
       d = {}
@@ -2509,6 +2569,9 @@ class App(wx.App):
           setattr(conf, k, v)
     else:
       setattr(conf, 'config_file_exists', False)
+    # Read in configuration from the selected radio
+    if configure: self.local_conf = configure.Configuration(self, argv_options.AskMe)
+    if configure: self.local_conf.UpdateConf()
     # Choose whether to use Unicode or text symbols
     for k in ('sym_stat_mem', 'sym_stat_fav', 'sym_stat_dx',
         'btn_text_range_dn', 'btn_text_range_up', 'btn_text_play', 'btn_text_rec', 'btn_text_file_rec', 
@@ -2520,6 +2583,11 @@ class App(wx.App):
         setattr(conf, 'X' + k, getattr(conf, 'T' + k))
     if conf.invertSpectrum:
       QS.invert_spectrum(1)
+    if conf.use_sdriq:
+      sample_rate = int(66666667.0 / conf.sdriq_decimation + 0.5)
+    if conf.use_sdriq or conf.use_rx_udp:
+      name_of_sound_capt = ''
+      name_of_mic_play = ''
     self.wfallScaleZ = {}		# scale and zero for the waterfall pane2
     self.bandState = {}			# for key band, the current (self.VFO, self.txFreq, self.mode)
     self.bandState.update(conf.bandState)
@@ -2537,12 +2605,28 @@ class App(wx.App):
       }
     # Open hardware file
     global Hardware
-    if hasattr(conf, "Hardware"):	# Hardware defined in config file
-      Hardware = conf.Hardware(self, conf)
+    if configure and self.local_conf.GetHardware():
+      pass
     else:
-      Hardware = conf.quisk_hardware.Hardware(self, conf)
-    self.Hardware = Hardware
+      if hasattr(conf, "Hardware"):	# Hardware defined in config file
+        self.Hardware = conf.Hardware(self, conf)
+        hname =  ConfigPath
+      else:
+        self.Hardware = conf.quisk_hardware.Hardware(self, conf)
+        hname =  conf.quisk_hardware.__file__
+      if hname[-3:] == 'pyc':
+        hname = hname[0:-1]
+      setattr(conf, 'hardware_file_name',  hname)
+      if conf.quisk_widgets:
+        hname =  conf.quisk_widgets.__file__
+        if hname[-3:] == 'pyc':
+          hname = hname[0:-1]
+        setattr(conf, 'widgets_file_name',  hname)
+      else:
+        setattr(conf, 'widgets_file_name',  '')
+    Hardware = self.Hardware
     # Initialization - may be over-written by persistent state
+    if configure: self.local_conf.Initialize()
     self.clip_time0 = 0		# timer to display a CLIP message on ADC overflow
     self.smeter_db_count = 0	# average the S-meter
     self.smeter_db_sum = 0
@@ -2633,10 +2717,7 @@ class App(wx.App):
     self.file_play_repeat = 0	# Repeat time in seconds, or zero for no repeat
     self.file_play_timer = 0
     # get the screen size - thanks to Lucian Langa
-    if conf.graph_width == 1.0:
-      x1, y1, x2, y2 = wx.Display().GetClientArea()
-    else:
-      x1, y1, x2, y2 = wx.Display().GetGeometry()
+    x1, y1, x2, y2 = wx.Display().GetGeometry()
     self.screen_width = x2 - x1
     self.screen_height = y2 - y1
     self.Bind(wx.EVT_IDLE, self.OnIdle)
@@ -2702,21 +2783,51 @@ The new code supports multiple corrections per band.""")
             for n in (n0, n1, n2):
               if value[6:] in n:
                 setattr(conf, key, "pulse:" + n0)
+    # Create the main frame
+    if conf.window_width > 0:	# fixed width of the main frame
+      self.width = conf.window_width
+    else:
+      self.width = self.screen_width * 8 // 10
+    if conf.window_height > 0:	# fixed height of the main frame
+      self.height = conf.window_height
+    else:
+      self.height = self.screen_height * 5 // 10
+    self.main_frame = frame = QMainFrame(self.width, self.height)
+    self.SetTopWindow(frame)
+    #w, h = frame.GetSizeTuple()
+    #ww, hh = frame.GetClientSizeTuple()
+    #print ('Main frame: size', w, h, 'client', ww, hh)
     # Find the data width from a list of prefered sizes; it is the width of returned graph data.
     # The graph_width is the width of data_width that is displayed.
-    width = self.screen_width * conf.graph_width
-    percent = conf.display_fraction		# display central fraction of total width
-    percent = int(percent * 100.0 + 0.4)
-    width = width * 100 // percent
-    for x in fftPreferedSizes:
-      if x > width:
-        self.data_width = x
-        break
-    else:
-      self.data_width = fftPreferedSizes[-1]
-    self.graph_width = self.data_width * percent // 100
-    if self.graph_width % 2 == 1:		# Both data_width and graph_width are even numbers
-      self.graph_width += 1
+    if conf.window_width > 0:
+      wFrame, h = frame.GetClientSizeTuple()				# client window width
+      self.graph = GraphScreen(frame, self.width/2, self.width/2)	# make a GraphScreen to calculate borders
+      self.graph_width = wFrame - (self.graph.width - self.graph.graph_width)		# less graph borders equals actual graph_width
+      del self.graph
+      if self.graph_width % 2 == 1:		# Both data_width and graph_width are even numbers
+        self.graph_width -= 1
+      width = int(self.graph_width / conf.display_fraction)		# estimated data width
+      for x in fftPreferedSizes:
+        if x >= width:
+          self.data_width = x
+          break
+      else:
+        self.data_width = fftPreferedSizes[-1]
+    else:		# use conf.graph_width to determine the width
+      width = self.screen_width * conf.graph_width		# estimated graph width
+      percent = conf.display_fraction		# display central fraction of total width
+      percent = int(percent * 100.0 + 0.4)
+      width = width * 100 // percent		# estimated data width
+      for x in fftPreferedSizes:
+        if x > width:
+          self.data_width = x
+          break
+      else:
+        self.data_width = fftPreferedSizes[-1]
+      self.graph_width = self.data_width * percent // 100
+      if self.graph_width % 2 == 1:		# Both data_width and graph_width are even numbers
+        self.graph_width += 1
+    #print('graph_width', self.graph_width, 'data_width', self.data_width)
     # The FFT size times the average_count controls the graph refresh rate
     factor = float(self.sample_rate) / conf.graph_refresh / self.data_width
     ifactor = int(factor + 0.5)		# fft size multiplier * average count
@@ -2751,14 +2862,6 @@ The new code supports multiple corrections per band.""")
         average_count = 1
     self.fft_size = self.data_width * fft_mult
     # print 'data, graph,fft', self.data_width, self.graph_width, self.fft_size
-    if conf.graph_width == 1.0:		# Full screen mode
-      self.width = self.screen_width
-      self.height = self.screen_height
-    else:
-      self.width = self.screen_width * 8 // 10
-      self.height = self.screen_height * 5 // 10
-    self.main_frame = frame = QMainFrame(self.width, self.height)
-    self.SetTopWindow(frame)
     # Record the basic application parameters
     if sys.platform == 'win32':
       h = self.main_frame.GetHandle()
@@ -2839,24 +2942,31 @@ The new code supports multiple corrections per band.""")
     button_width //= 13		# This is our final button size
     bw = button_width
     button_width, button_height = self.MakeButtons(frame, gbs, button_width, gap)
-    ww = self.graph.width
-    self.main_frame.SetSizeHints(ww, 100)
+    minw = width = self.graph.width
     if button_width > bw:		# The button width was increased
-      ww += (button_width - bw) * 12
-    if conf.graph_width == 1.0:		# Full screen mode
-      self.main_frame.SetClientSizeWH(self.screen_width, self.screen_height)
-    else:
-      self.main_frame.SetClientSizeWH(ww, self.screen_height * 5 // 10)
+      width = minw + (button_width - bw) * 12
+    maxw = maxh = -1
+    minh = 100
+    if conf.window_width > 0:
+      minw = width = maxw = conf.window_width
+    if conf.window_height > 0:
+      minh = maxh = conf.window_height
+    self.main_frame.SetSizeHints(minw, minh, maxw, maxh)
+    self.main_frame.SetClientSizeWH(width, self.height)
     self.MakeTopRow(frame, gbs, button_width, button_height)
     self.button_width = button_width
     self.button_height = button_height
     if hasattr(Hardware, 'pre_open'):       # pre_open() is called before open()
       Hardware.pre_open()
-    if conf.quisk_widgets:
+    if configure and self.local_conf.GetWidgets(self, Hardware, conf, frame, gbs, vertBox):
+      pass
+    elif conf.quisk_widgets:
       self.bottom_widgets = conf.quisk_widgets.BottomWidgets(self, Hardware, conf, frame, gbs, vertBox)
     # Open the hardware.  This must be called before open_sound().
     self.config_text = Hardware.open()
-    if not self.config_text:
+    if self.config_text:
+      self.main_frame.SetConfigText(self.config_text)
+    else:
       self.config_text = "Missing config_text"
     if QS.open_key(conf.key_method):
       print('open_key failed for name "%s"' % conf.key_method)
@@ -2907,7 +3017,7 @@ The new code supports multiple corrections per band.""")
       self.sound_thread.start()
     if conf.dxClHost:
       # create DX Cluster and register listener for change notification
-      self.dxCluster = dxcluster.DxCluster()    
+      self.dxCluster = dxcluster.DxCluster()
       self.dxCluster.setListener(self.OnDxClChange)
       self.dxCluster.start()
     return True
@@ -2934,6 +3044,7 @@ The new code supports multiple corrections per band.""")
     QS.close_rx_udp()
     Hardware.close()
     self.SaveState()
+    if configure: self.local_conf.SaveState()
   def CheckState(self):		# check whether state has changed
     changed = False
     if self.init_path:		# save current program state
@@ -3006,7 +3117,11 @@ The new code supports multiple corrections per band.""")
     frame.Bind(wx.EVT_TEXT_ENTER, self.FreqEntry, source=e)
     # S-meter
     self.smeter = QuiskText(frame, ' S9+23 -166.00 dB ', bh, wx.ALIGN_LEFT, True)
-    gbs.Add(self.smeter, (0, 23), (1, 4), flag=wx.EXPAND)
+    b = QuiskPushbutton(frame, self.OnSmeterRightDown, '..')
+    szr = wx.BoxSizer(wx.HORIZONTAL)
+    szr.Add(self.smeter, 1, flag=wx.ALIGN_LEFT|wx.ALIGN_CENTER_VERTICAL)
+    szr.Add(b, 0, flag=wx.ALIGN_RIGHT|wx.ALIGN_CENTER_VERTICAL)
+    gbs.Add(szr, (0, 23), (1, 4), flag=wx.EXPAND)
     self.smeter.TextCtrl.Bind(wx.EVT_RIGHT_DOWN, self.OnSmeterRightDown)
     self.smeter.TextCtrl.SetBackgroundColour(conf.color_freq)
     self.smeter.TextCtrl.SetForegroundColour(conf.color_freq_txt)
@@ -3027,8 +3142,12 @@ The new code supports multiple corrections per band.""")
     # Make a popup menu for the memory buttons
     self.memory_menu = wx.Menu()
   def OnSmeterRightDown(self, event):
-    pos = event.GetPosition()
-    self.smeter.TextCtrl.PopupMenu(self.smeter_menu, pos)
+    try:
+      pos = event.GetPosition()		# works for right-click
+      self.smeter.TextCtrl.PopupMenu(self.smeter_menu, pos)
+    except:
+      btn = event.GetEventObject()	# works for button
+      btn.PopupMenu(self.smeter_menu, (0,0))
   def OnSmeterMeterA(self, event):
     self.smeter_avg_seconds = 1.0
     self.smeter_usage = "smeter"
@@ -3154,7 +3273,7 @@ The new code supports multiple corrections per band.""")
     if conf.add_freedv_button:
       n_freedv = count
       count += 1
-      labels.append(('FDV-U', 'FDV-L'))
+      labels.append('FDV-U')
     if conf.add_imd_button:
       n_imd = count
       count += 1
@@ -3168,10 +3287,19 @@ The new code supports multiple corrections per band.""")
     mode_names.sort()
     self.config_screen.favorites.SetModeEditor(mode_names)
     self.modeButns = RadioButtonGroup(frame, self.OnBtnMode, labels, None)
+    self.freedv_menu_items = {}
     if conf.add_freedv_button:
+      self.freedv_menu = wx.Menu()
+      for mode, index in conf.freedv_modes:
+        item = self.freedv_menu.AppendRadioItem(-1, mode)
+        self.freedv_menu_items[index] = item
+        self.Bind(wx.EVT_MENU, self.OnFreedvMenu, item)
+      b = QuiskCycleMenuButton(frame, self.freedv_menu, self.OnBtnMode, ('FDV-U', 'FDV-L'), is_radio=True)
+      self.modeButns.ReplaceButton(n_freedv, b)
       msg = conf.freedv_tx_msg
+      QS.freedv_set_options(mode=conf.freedv_modes[0][1], tx_msg=msg, DEBUG=0, squelch=1)
       try:
-        ok = QS.freedv_set_options(mode=0, tx_msg=msg) and QS.freedv_open()
+        ok = QS.freedv_open()
       except:
         traceback.print_exc()
         ok = 0
@@ -3222,6 +3350,7 @@ The new code supports multiple corrections per band.""")
     for i in range(15, 27):
       gbs.AddGrowableCol(i,1)
     w, height = right_row1[0].GetMinSize()
+    self.widget_row = 4		# Next available row for widgets
     return button_width, height
   def MeasureAudioVoltage(self):
     v = QS.measure_audio(-1)
@@ -3234,11 +3363,14 @@ The new code supports multiple corrections per band.""")
       vfo = self.VFO
     vfo += Hardware.transverter_offset
     t = '%13.2f' % (QS.measure_frequency(-1) + vfo)
-    t = '  ' + t[0:4] + ' ' + t[4:7] + ' ' + t[7:] + ' Hz'
+    t = t[0:4] + ' ' + t[4:7] + ' ' + t[7:] + ' Hz'
     self.smeter.SetLabel(t)
   def NewDVmeter(self):
     if conf.add_freedv_button:
       snr = QS.freedv_get_snr()
+      txt = QS.freedv_get_rx_char()
+      self.graph.ScrollMsg(txt)
+      self.waterfall.ScrollMsg(txt)
     else:
       snr = 0.0
     t = "  SNR %3.0f" % snr
@@ -3264,7 +3396,7 @@ The new code supports multiple corrections per band.""")
       s = (s - 9.0) * 6
       t = "  S9+%2.0f %7.2f dB" % (s, self.smeter_db)
     else:
-      t = "  S%.0f    %7.2f dB" % (s, self.smeter_db)
+      t = "  S%.0f  %7.2f dB" % (s, self.smeter_db)
     self.smeter.SetLabel(t)
   def MakeFilterButtons(self, args):
     # Change the filter selections depending on the mode: CW, SSB, etc.
@@ -3413,6 +3545,21 @@ The new code supports multiple corrections per band.""")
     QS.set_filters(filtI, filtQ, bw)
     if self.screen is self.filter_screen:
       self.screen.NewFilter()
+  def OnFreedvMenu(self, event):
+    idd = event.GetId()
+    text = self.freedv_menu.GetLabel(idd)
+    for mode, index in conf.freedv_modes:
+      if mode == text:
+        break
+    else:
+      print ("Failure in OnFreedvMenu")
+      return
+    mode = QS.freedv_set_options(mode=index)
+    if mode != index:		# change to new mode failed
+      self.freedv_menu_items[mode].Check(1)
+      pos = (self.width/2, self.height/2)
+      dlg = wx.MessageDialog(self.main_frame, "No codec2 support for mode " + text, "FreeDV Modes", wx.OK, pos)
+      dlg.ShowModal()
   def OnBtnScreen(self, event, name=None):
     if event is not None:
       win = event.GetEventObject()
@@ -3420,6 +3567,7 @@ The new code supports multiple corrections per band.""")
     self.screen.Hide()
     self.station_screen.Hide()
     if name == 'Config':
+      self.config_screen.FinishPages()
       self.screen = self.config_screen
     elif name[0:5] == 'Graph':
       self.screen = self.graph
@@ -3926,6 +4074,9 @@ The new code supports multiple corrections per band.""")
       self.BtnAGC.SetDual(True)
       self.BtnAGC.SetLabel('AGC')
       self.BtnAGC.SetValue(self.use_AGC, True)
+    if mode not in ('FDV-L', 'FDV-U'):
+      self.graph.SetDisplayMsg()
+      self.waterfall.SetDisplayMsg()
     self.SetTxAudio()
   def MakeMemPopMenu(self):
     self.memory_menu.Destroy()
@@ -3993,6 +4144,7 @@ The new code supports multiple corrections per band.""")
   def OnBtnFavoritesShow(self, event):
     self.screenBtnGroup.SetLabel("Config", do_cmd=False)
     self.screen.Hide()
+    self.config_screen.FinishPages()
     self.screen = self.config_screen
     self.config_screen.notebook.SetSelection(3)
     self.screen.Show()
@@ -4269,9 +4421,13 @@ The new code supports multiple corrections per band.""")
             ptt = True
           else:
             ptt = False
-        elif self.file_play_state == 2 and QS.is_vox():		# VOX tripped between file play repeats
+        elif self.file_play_state == 2 and QS.is_vox():			# VOX tripped between file play repeats
           self.TurnOffFilePlay()
           ptt = True
+      if self.file_play_state == 2 and QS.is_key_down():			# hardware key between file play repeats
+        if time.time() > self.file_play_timer - self.file_play_repeat + 0.25:	# pause to allow key state to change
+          self.TurnOffFilePlay()
+          ptt = False
       if conf.hot_key_ptt1:
         hot_key = wx.GetKeyState(conf.hot_key_ptt1) and (conf.hot_key_ptt2 is None or wx.GetKeyState(conf.hot_key_ptt2))
         if hot_key:
@@ -4336,6 +4492,7 @@ The new code supports multiple corrections per band.""")
       if self.add_version and Hardware.GetFirmwareVersion() is not None:
         self.add_version = False
         self.config_text = "%s, firmware version 1.%d" % (self.config_text, Hardware.GetFirmwareVersion())
+        self.main_frame.SetConfigText(self.config_text)
       if not self.band_up_down:
         # Poll the hardware for changed frequency.  This is used for hardware
         # that can change its frequency independently of Quisk; eg. K3.
@@ -4349,6 +4506,7 @@ The new code supports multiple corrections per band.""")
         self.save_time0 = self.timer
         if self.CheckState():
           self.SaveState()
+        if configure: self.local_conf.SaveState()
       if self.tmp_playing and QS.set_record_state(-1):	# poll to see if playback is finished
         self.btnTmpPlay.SetValue(False, True)
       if self.file_play_state == 0:
@@ -4369,8 +4527,10 @@ The new code supports multiple corrections per band.""")
 
 def main():
   """If quisk is installed as a package, you can run it with quisk.main()."""
-  App()
-  application.MainLoop()
+  while application is None or application.startup_quisk:
+    App()
+    application.startup_quisk = False
+    application.MainLoop()
 
 if __name__ == '__main__':
   main()

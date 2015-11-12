@@ -7,6 +7,14 @@ import sys
 from n2adr import quisk_hardware
 from n2adr import quisk_widgets
 
+try:
+  index = sys.argv.index('--local')
+  local_option = sys.argv[index + 1]
+except:
+  local_option = ''
+
+settings_file_path = "../quisk_settings.json"
+
 if sys.platform == "win32":
   n2adr_sound_pc_capt = 'Line In (Realtek High Definition Audio)'
   n2adr_sound_pc_play = 'Speakers (Realtek High Definition Audio)'
@@ -39,8 +47,15 @@ else:		# alsa devices
   favorites_file_path = "/home/jim/pub/quisk_favorites.txt"
 
 name_of_sound_capt = ""
-name_of_sound_play = n2adr_sound_usb_play
 microphone_name = n2adr_sound_usb_mic
+if local_option == "Q2H":
+  name_of_sound_play = ""
+else:
+  name_of_sound_play = n2adr_sound_usb_play
+
+#name_of_sound_play = "pulse:alsa_output.usb-0d8c_USB_Sound_Device-00-Device.analog-stereo"
+#microphone_name = ""
+show_pulse_audio_devices = True
 
 mic_sample_rate = 48000
 playback_rate = 48000
@@ -74,6 +89,7 @@ user_call_sign = 'n2adr'
 add_imd_button = 1
 add_fdx_button = 1
 use_sidetone = 1
+split_rxtx = 1
 
 use_rx_udp = 1				# Get ADC samples from UDP
 rx_udp_ip = "192.168.1.196"		# Sample source IP address
@@ -86,7 +102,7 @@ display_fraction = 1.00
 tx_ip = "192.168.1.196"
 tx_audio_port = 0xBC79
 mic_out_volume = 0.8
-freedv_tx_msg = "N2ADR Jim\n"
+freedv_tx_msg = "Jim N2ADR in NJ, USA.  "
 
 mixer_settings = [		# These are for CM106 like sound device
     (microphone_name, 16, 1),		# PCM capture from line

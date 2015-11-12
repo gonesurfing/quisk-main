@@ -8,6 +8,8 @@ from quisk_hardware_model import Hardware as BaseHardware
 from n2adr import uhfrx_widgets as quisk_widgets
 import _quisk as QS
 
+settings_file_path = "../quisk_settings.json"
+
 DEBUG = 0
 if sys.platform == "win32":
   n2adr_sound_pc_capt = 'Line In (Realtek High Definition Audio)'

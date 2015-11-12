@@ -25,7 +25,7 @@ graph_y_zero  = 100
 playback_rate = 48000
 add_imd_button = 1
 add_fdx_button = 1
-tx_level = {None:255, '60':110}		# Adjust your power for each band
+tx_level = {None:255, '60':255}		# Adjust your power for each band
 
 # Control the J16 connector according to the band.  J16 is C0 index 0, C2[7:1].  If the band is not here, the default is 0x00.
 # This value is written to bits C2[7:1].  That is, it is left shifted by one bit and written to byte C2.

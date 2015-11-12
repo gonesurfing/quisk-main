@@ -25,8 +25,8 @@ class Hardware(BaseHardware):
 	#		0x02	Enable all other transmit
 	#		0x04	Use the HiQSDR extended IO pins not present in the 2010 QEX ver 1.0
 	#		0x08	The key is down (software key)
-	#		0x40	David Fainitski: Tune for autotuner
-	#		0x80	David Fainitski: Mic Boost 20dB
+	#		0x40	odyssey: Spot button is in use
+	#		0x80	odyssey: Mic Boost 20dB
 	#	[12]	Rx control bits
 	#			Second stage decimation less one, 1-39, six bits
 	#	[13]	zero or firmware version number
@@ -70,6 +70,11 @@ class Hardware(BaseHardware):
     self.HiQSDR_Connector_X1 = 0
     self.HiQSDR_Attenuator = 0
     self.HiQSDR_Bits = 0
+    try:
+      if conf.radio_sound_mic_boost:
+        self.tx_control = 0x80
+    except:
+      pass
     if conf.use_rx_udp == 2:	# Set to 2 for the HiQSDR
       self.rf_gain_labels = ('RF 0 dB', 'RF +10', 'RF -10', 'RF -20', 'RF -30')
       self.antenna_labels = ('Ant 1', 'Ant 2')
@@ -289,9 +294,11 @@ class Hardware(BaseHardware):
     # The Spot button sets the mode to SSB-equivalent for CW so that the Spot level works.
     if level >= 0 and not self.usingSpot:		# Spot was turned on
       self.usingSpot = True
+      self.tx_control |= 0x40
       self.ChangeMode(self.mode)
     elif level < 0 and self.usingSpot:			# Spot was turned off
       self.usingSpot = False
+      self.tx_control &= ~0x40
       self.ChangeMode(self.mode)
   def OnBtnFDX(self, is_fdx):   # Status of FDX button, 0 or 1
     if is_fdx:

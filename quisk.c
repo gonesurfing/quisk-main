@@ -440,17 +440,17 @@ void QuiskWavClose(struct QuiskWav * hWav)
 #endif
 
 // These are used for digital voice codecs
-ty_dvoice_codec  pt_quisk_freedv_rx;
-ty_dvoice_codec  pt_quisk_freedv_tx;
+ty_dvoice_codec_rx  pt_quisk_freedv_rx;
+ty_dvoice_codec_tx  pt_quisk_freedv_tx;
 
-void quisk_dvoice_freedv(ty_dvoice_codec rx, ty_dvoice_codec tx)
+void quisk_dvoice_freedv(ty_dvoice_codec_rx rx, ty_dvoice_codec_tx tx)
 {
 	pt_quisk_freedv_rx = rx;
 	pt_quisk_freedv_tx = tx;
 }
-
+#if 0
 static int fFracDecim(double * dSamples, int nSamples, double fdecim)
-{
+{  // fractional decimation by fdecim > 1.0
 	int i, nout;
 	double xm0, xm1, xm2, xm3;
 	static double dindex = 1;
@@ -491,7 +491,7 @@ static int fFracDecim(double * dSamples, int nSamples, double fdecim)
 	//printf ("in %d out %d\n", in, out);
 	return nout;
 }
-
+#endif
 static int cFracDecim(complex double * cSamples, int nSamples, double fdecim)
 {
 // Fractional decimation of I/Q signals works poorly because it introduces aliases and birdies.
@@ -536,7 +536,7 @@ static int cFracDecim(complex double * cSamples, int nSamples, double fdecim)
 	//printf ("in %d out %d\n", in, out);
 	return nout;
 }
-			
+
 #define QUISK_NB_HWINDOW_SECS	500.E-6	// half-size of blanking window in seconds
 static void NoiseBlanker(complex double * cSamples, int nSamples)
 {
@@ -939,7 +939,7 @@ static complex double dRxFilterOut(complex double sample, int bank)
 	return cx;
 }
 
-static complex double cRxFilterOut(complex double sample, int bank)
+complex double cRxFilterOut(complex double sample, int bank)
 {  // Rx FIR filter; bank is the static storage index, and must be different for different data streams
 	double accI, accQ;
 	int j, k;
@@ -1197,6 +1197,43 @@ void quisk_file_playback(complex double * cSamples, int nSamples, double volume)
 	}
 }
 
+#define BUF2CHAN_SIZE	12000
+static int Buffer2Chan(double * samp1, int count1, double * samp2, int count2)
+{	// return the minimum of count1 and count2, buffering as necessary
+	int nout;
+	static int nbuf1=0, nbuf2=0;
+	static double buf1[BUF2CHAN_SIZE], buf2[BUF2CHAN_SIZE];
+
+	if (samp1 == NULL) {	// initialize
+		nbuf1 = nbuf2 = 0;
+		return 0;
+	}
+	if (nbuf1 == 0 && nbuf2 == 0 && count1 == count2)	// nothing to do
+		return count1;
+	if (count1 + nbuf1 >= BUF2CHAN_SIZE || count2 + nbuf2 >= BUF2CHAN_SIZE) {	// overflow
+		if (DEBUG || DEBUG_IO)
+			printf("Overflow in Buffer2Chan nbuf1 %d nbuf2 %d size %d\n", nbuf1, nbuf2, BUF2CHAN_SIZE);
+		nbuf1 = nbuf2 = 0;
+	}
+	memcpy(buf1 + nbuf1, samp1, count1 * sizeof(double));	// add samples to buffer
+	nbuf1 += count1;
+	memcpy(buf2 + nbuf2, samp2, count2 * sizeof(double));
+	nbuf2 += count2;
+	if (nbuf1 <= nbuf2)
+		nout = nbuf1;		// number of samples to output
+	else
+		nout = nbuf2;
+	//if (count1 + nbuf1 >= 2000 || count2 + nbuf2 >= 2000)
+	//	printf("Buffer2Chan nbuf1 %d nbuf2 %d nout %d\n", nbuf1, nbuf2, nout);
+	memcpy(samp1, buf1, nout * sizeof(double));			// output samples
+	nbuf1 -= nout;
+	memmove(buf1, buf1 + nout, nbuf1 * sizeof(double));
+	memcpy(samp2, buf2, nout * sizeof(double));
+	nbuf2 -= nout;
+	memmove(buf2, buf2 + nout, nbuf2 * sizeof(double));
+	return nout;
+}
+
 void quisk_file_microphone(complex double * cSamples, int nSamples)
 {
 	// Replace mic samples by file samples.
@@ -1381,7 +1418,7 @@ static int quisk_process_demodulate(complex double * cSamples, double * dsamples
 	int i;
 	complex double cx, cpx;
 	double d, di, dd;
-	static struct AgcState Agc = {0.3, 16000, 0};
+	static struct AgcState Agc1 = {0.3, 16000, 0}, Agc2 = {0.3, 16000, 0};
 	static struct stStorage {
 		complex double fm_1;			// Sample delayed by one
 		double dc_remove;		// DC removal for AM
@@ -1395,7 +1432,7 @@ static int quisk_process_demodulate(complex double * cSamples, double * dsamples
 		struct quisk_dFilter filtAudio12p2;
 		struct quisk_dFilter filtAudio24p6;
 		struct quisk_dFilter filtAudioFmHp;
-		struct quisk_dFilter filtDecim16to8;
+		struct quisk_cFilter filtDecim16to8;
 		struct quisk_cFilter filtDecim48to24;
 		struct quisk_cFilter filtDecim48to16;
 	} Storage[2] ;
@@ -1410,7 +1447,7 @@ static int quisk_process_demodulate(complex double * cSamples, double * dsamples
 			quisk_filt_dInit(&Storage[i].filtAudio12p2, quiskAudio24p4Coefs, sizeof(quiskAudio24p4Coefs)/sizeof(double));
 			quisk_filt_dInit(&Storage[i].filtAudio24p6, quiskAudio24p6Coefs, sizeof(quiskAudio24p6Coefs)/sizeof(double));
 			quisk_filt_dInit(&Storage[i].filtAudioFmHp, quiskAudioFmHpCoefs, sizeof(quiskAudioFmHpCoefs)/sizeof(double));
-			quisk_filt_dInit(&Storage[i].filtDecim16to8, quiskFilt16dec8Coefs, sizeof(quiskFilt16dec8Coefs)/sizeof(double));
+			quisk_filt_cInit(&Storage[i].filtDecim16to8, quiskFilt16dec8Coefs, sizeof(quiskFilt16dec8Coefs)/sizeof(double));
 			quisk_filt_cInit(&Storage[i].filtDecim48to24, quiskFilt48dec24Coefs, sizeof(quiskFilt48dec24Coefs)/sizeof(double));
 			quisk_filt_cInit(&Storage[i].filtDecim48to16, quiskAudio24p3Coefs, sizeof(quiskAudio24p3Coefs)/sizeof(double));
 			Storage[i].fm_1 = 10;
@@ -1573,39 +1610,32 @@ static int quisk_process_demodulate(complex double * cSamples, double * dsamples
 		break;
 	case 11:	 // digital voice at 8 ksps
 	case 12:
+		quisk_check_freedv_mode();
 		quisk_demod_srate /= 3;
 		quisk_filter_srate = quisk_demod_srate;
 		nSamples = quisk_cDecimate(cSamples, nSamples, &Storage[bank].filtDecim48to16, 3);
-		process_agc(&Agc, cSamples, nSamples, 1);
-		if (rxMode == 11) {
-			for (i = 0; i < nSamples; i++) {
-				cx = cRxFilterOut(cSamples[i], bank);
-				dsamples[i] = dd = creal(cx) - cimag(cx);
-				measure_audio_sum += dd * dd;
-				measure_audio_count += 1;
-			}
-		}
-		else {
-			for (i = 0; i < nSamples; i++) {
-				cx = cRxFilterOut(cSamples[i], bank);
-				dsamples[i] = dd = creal(cx) + cimag(cx);
-				measure_audio_sum += dd * dd;
-				measure_audio_count += 1;
-			}
-		}
+		if (bank == 0)
+			process_agc(&Agc1, cSamples, nSamples, 1);
+		else
+			process_agc(&Agc2, cSamples, nSamples, 1);
 		if(bank == 0)
 			dAutoNotch(dsamples, nSamples, 0, quisk_filter_srate);
 		// Perhaps decimate by an additional fraction
 		if (quisk_decim_srate != 48000) {
 			dd = quisk_decim_srate / 48000.0;
-			nSamples = fFracDecim(dsamples, nSamples, dd);
+			nSamples = cFracDecim(cSamples, nSamples, dd);
 			quisk_demod_srate = (int)(quisk_demod_srate / dd + 0.5);
 			quisk_decim_srate = 48000;
 		}
 		quisk_demod_srate /= 2;
-		nSamples = quisk_dDecimate(dsamples, nSamples, &Storage[bank].filtDecim16to8, 2);
+		quisk_filter_srate /= 2;
+		nSamples = quisk_cDecimate(cSamples, nSamples, &Storage[bank].filtDecim16to8, 2);
 		if (pt_quisk_freedv_rx)
-			nSamples = (* pt_quisk_freedv_rx)(dsamples, nSamples);
+			nSamples = (* pt_quisk_freedv_rx)(cSamples, dsamples, nSamples, bank);
+		for (i = 0; i < nSamples; i++) {
+			measure_audio_sum += dsamples[i] * dsamples[i];
+			measure_audio_count += 1;
+		}
 		nSamples = quisk_dInterpolate(dsamples, nSamples, &Storage[bank].filtAudio24p3, 3);
 		quisk_demod_srate *= 3;
 		break;
@@ -1756,6 +1786,7 @@ int quisk_process_samples(complex double * cSamples, int nSamples)
 	fft_data * ptFFT;
 
 	static int size_dsamples = 0;		// Current dimension of dsamples, dsamples2, orig_cSamples
+	static int old_split_rxtx = 0;		// Prior value of split_rxtx
 	static double * dsamples = NULL;
 	static double * dsamples2 = NULL;
 	static complex double * orig_cSamples = NULL;
@@ -1809,8 +1840,12 @@ int quisk_process_samples(complex double * cSamples, int nSamples)
 
 	is_key_down = quisk_transmit_mode || quisk_is_key_down();
 	orig_nSamples = nSamples;
-	if (split_rxtx)
+	if (split_rxtx) {
 		memcpy(orig_cSamples, cSamples, nSamples * sizeof(complex double));
+		if ( ! old_split_rxtx)		// start of new split mode
+			Buffer2Chan(NULL, 0, NULL, 0);
+	}
+	old_split_rxtx = split_rxtx;
 
 	if (is_key_down && !isFDX) {	// The key is down; replace this data block
 		dOutCounter += (double)nSamples * quisk_sound_state.playback_rate /
@@ -1976,7 +2011,7 @@ int quisk_process_samples(complex double * cSamples, int nSamples)
 		;		// This mode is already stereo
 	}
 	else if (split_rxtx) {		// Demodulate a second channel
-		phase = cexp((I * -2.0 * M_PI * quisk_tx_tune_freq) / quisk_sound_state.sample_rate);
+		phase = cexp((I * -2.0 * M_PI * (quisk_tx_tune_freq + rit_freq)) / quisk_sound_state.sample_rate);
 		// Tune the second channel to frequency
 		for (i = 0; i < orig_nSamples; i++) {
 			orig_cSamples[i] *= txTuneVector;
@@ -1984,7 +2019,7 @@ int quisk_process_samples(complex double * cSamples, int nSamples)
 		}
 		n = quisk_process_decimate(orig_cSamples, orig_nSamples, 1);
 		n = quisk_process_demodulate(orig_cSamples, dsamples2, n, 1);
-		// We assume that n == nSamples
+		nSamples = Buffer2Chan(dsamples, nSamples, dsamples2, n);		// buffer dsamples and dsamples2 so the count is equal
 		switch(split_rxtx) {
 		default:
 		case 1:		// stereo, higher frequency is real
@@ -2210,7 +2245,7 @@ static PyObject * get_filter_rate(PyObject * self, PyObject * args)
 		break;
 	case 11:	 // digital voice at 8 ksps
 	case 12:
-		filter_srate = decim_srate / 3;
+		filter_srate = 8000;
 		break;
 	}
 	//printf("Filter rate %d\n", filter_srate);
@@ -2913,8 +2948,7 @@ static PyObject * open_sound(PyObject * self, PyObject * args)
 	strncpy(quisk_sound_state.mic_dev_name, mname, QUISK_SC_SIZE);
 	strncpy(quisk_sound_state.name_of_mic_play, mpname, QUISK_SC_SIZE);
 	strncpy(quisk_sound_state.mic_ip, mip, IP_SIZE);
-    strncpy(quisk_sound_state.IQ_server, QuiskGetConfigString("IQ_Server_IP", ""), IP_SIZE);
-    printf("IQ_server %s\n", quisk_sound_state.IQ_server);
+	strncpy(quisk_sound_state.IQ_server, QuiskGetConfigString("IQ_Server_IP", ""), IP_SIZE);
 	fft_error = 0;
 	quisk_open_sound();
 	quisk_open_mic();
@@ -3885,6 +3919,7 @@ static PyMethodDef QuiskMethods[] = {
 	{"freedv_close", quisk_freedv_close, METH_VARARGS, "Close FreeDV."},
 	{"freedv_get_snr", quisk_freedv_get_snr, METH_VARARGS, "Return the signal to noise ratio in dB."},
 	{"freedv_get_version", quisk_freedv_get_version, METH_VARARGS, "Return the codec2 API version."},
+	{"freedv_get_rx_char", quisk_freedv_get_rx_char, METH_VARARGS, "Get text characters received from freedv."},
 	{"freedv_set_options", (PyCFunction)quisk_freedv_set_options, METH_VARARGS|METH_KEYWORDS, "Set the freedv parameters."},
 	{NULL, NULL, 0, NULL}		/* Sentinel */
 };
