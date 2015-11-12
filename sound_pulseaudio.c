@@ -513,7 +513,6 @@ int quisk_read_pulseaudio(struct sound_dev *dev, complex double *cSamples) {
             return 0;
         }
         dev->dev_latency = read_frames * dev->num_channels * 1000 / (dev->sample_rate / 1000);
-        read_frames = dev->read_frames;
     }
     
     
