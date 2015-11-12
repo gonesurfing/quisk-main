@@ -98,4 +98,7 @@ class Hardware(BaseHardware):
         print ('error doing', message)
         text = "error setting ptt on or off!"
         self.application.bottom_widgets.info_text.SetLabel(text)
+  def OnSpot(self, level):
+    self.spot_level = level
+
    
