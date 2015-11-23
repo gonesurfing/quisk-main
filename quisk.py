@@ -36,7 +36,7 @@ from types import *
 from quisk_widgets import *
 from filters import Filters
 import dxcluster
-configure = None ##import configure
+import configure
 
 # Fldigi XML-RPC control opens a local socket.  If socket.setdefaulttimeout() is not
 # called, the timeout on Linux is zero (1 msec) and on Windows is 2 seconds.  So we
@@ -361,7 +361,10 @@ class HamlibHandler:
       self.ErrParam()
     else:
       freq = int(freq + 0.5)
-      self.app.ChangeRxTxFrequency(None, freq)
+      if self.app.split_rxtx and not self.app.split_hamlib_tx:
+        self.app.ChangeRxTxFrequency(freq, None)
+      else:
+        self.app.ChangeRxTxFrequency(None, freq)
   def GetSplitVfo(self):
     # I am not sure if "VFO" is a suitable response
     if self.app.split_rxtx:
@@ -1637,7 +1640,7 @@ class GraphScreen(wx.Window):
     mouse_x, mouse_y = self.GetMousePosition(event)
     self.mouse_x = mouse_x
     x = mouse_x - self.originX
-    if application.split_locktx:
+    if application.split_rxtx and application.split_locktx:
       self.mouse_is_rx = True
     elif self.display.tune_rx and abs(x - self.display.tune_tx) > abs(x - self.display.tune_rx):
       self.mouse_is_rx = True
@@ -1690,7 +1693,7 @@ class GraphScreen(wx.Window):
       wm = self.WheelMod		# Round frequency when using mouse wheel
     mouse_x, mouse_y = self.GetMousePosition(event)
     x = mouse_x - self.originX
-    if application.split_locktx:
+    if application.split_rxtx and application.split_locktx:
       self.mouse_is_rx = True
     elif self.display.tune_rx and abs(x - self.display.tune_tx) > abs(x - self.display.tune_rx):
       self.mouse_is_rx = True
@@ -2518,7 +2521,7 @@ class App(wx.App):
   StateNames = [		# Names of state attributes to save and restore
   'bandState', 'bandAmplPhase', 'lastBand', 'VFO', 'txFreq', 'mode',
   'vardecim_set', 'filterAdjBw1', 'levelAGC', 'levelOffAGC', 'volumeAudio', 'levelSpot',
-  'levelSquelch', 'levelVOX', 'timeVOX',
+  'levelSquelch', 'levelVOX', 'timeVOX', 'sidetone_volume', 
   'txAudioClipUsb', 'txAudioClipAm','txAudioClipFm', 'txAudioClipFdv',
   'txAudioPreemphUsb', 'txAudioPreemphAm', 'txAudioPreemphFm', 'txAudioPreemphFdv',
   'wfallScaleZ']
@@ -2528,7 +2531,7 @@ class App(wx.App):
     self.init_path = None
     self.bottom_widgets = None
     self.dxCluster = None
-    self.startup_quisk = True
+    self.startup_quisk = False
     if sys.stdout.isatty():
       wx.App.__init__(self, redirect=False)
     else:
@@ -2581,6 +2584,7 @@ class App(wx.App):
         setattr(conf, 'X' + k, getattr(conf, 'U' + k))
       else:
         setattr(conf, 'X' + k, getattr(conf, 'T' + k))
+    MakeWidgetGlobals()
     if conf.invertSpectrum:
       QS.invert_spectrum(1)
     if conf.use_sdriq:
@@ -2658,7 +2662,7 @@ class App(wx.App):
     self.txAudioPreemphAm = 0
     self.txAudioPreemphFm = 0
     self.txAudioPreemphFdv = 30
-    self.levelSpot = 500			# Spot level control, 10 to 1000
+    self.levelSpot = 500			# Spot level control, 0 to 1000
     self.volumeAudio = 300			# audio volume
     self.VFO = 0					# frequency of the VFO
     self.ritFreq = 0				# receive incremental tuning frequency offset
@@ -2710,6 +2714,7 @@ class App(wx.App):
     self.zooming = False
     self.split_rxtx = False		# Are we in split Rx/Tx mode?
     self.split_locktx = False	# Split mode Tx frequency is fixed.
+    self.split_hamlib_tx = True	# Hamlib controls the Tx frequency when split; else the Rx frequency
     self.savedState = {}
     self.pttButton = None
     self.tmp_playing = False
@@ -2767,11 +2772,13 @@ The new code supports multiple corrections per band.""")
       else:
         conf.playback_rate = conf.sample_rate
     # Check for PulseAudio names and substitute the actual device name for abbreviations
+    self.pulse_in_use = False
     if sys.platform != 'win32' and conf.show_pulse_audio_devices:
       self.pa_dev_capt, self.pa_dev_play = QS.pa_sound_devices()
       for key in ("name_of_sound_play", "name_of_mic_play", "digital_output_name", "sample_playback_name"):
         value = getattr(conf, key)		# playback devices
         if value[0:6] == "pulse:":
+          self.pulse_in_use = True
           for n0, n1, n2 in self.pa_dev_play:
             for n in (n0, n1, n2):
               if value[6:] in n:
@@ -2779,6 +2786,7 @@ The new code supports multiple corrections per band.""")
       for key in ("name_of_sound_capt", "microphone_name", "digital_input_name"):
         value = getattr(conf, key)		# capture devices
         if value[0:6] == "pulse:":
+          self.pulse_in_use = True
           for n0, n1, n2 in self.pa_dev_capt:
             for n in (n0, n1, n2):
               if value[6:] in n:
@@ -2801,9 +2809,10 @@ The new code supports multiple corrections per band.""")
     # The graph_width is the width of data_width that is displayed.
     if conf.window_width > 0:
       wFrame, h = frame.GetClientSizeTuple()				# client window width
-      self.graph = GraphScreen(frame, self.width/2, self.width/2)	# make a GraphScreen to calculate borders
-      self.graph_width = wFrame - (self.graph.width - self.graph.graph_width)		# less graph borders equals actual graph_width
-      del self.graph
+      graph = GraphScreen(frame, self.width/2, self.width/2)	# make a GraphScreen to calculate borders
+      self.graph_width = wFrame - (graph.width - graph.graph_width)		# less graph borders equals actual graph_width
+      graph.Destroy()
+      del graph
       if self.graph_width % 2 == 1:		# Both data_width and graph_width are even numbers
         self.graph_width -= 1
       width = int(self.graph_width / conf.display_fraction)		# estimated data width
@@ -2878,7 +2887,6 @@ The new code supports multiple corrections per band.""")
     self.graph = GraphScreen(frame, self.data_width, self.graph_width)
     self.screen = self.graph
     width = self.graph.width
-    button_width = width	# calculate the final button width
     self.config_screen = ConfigScreen(frame, width, self.fft_size)
     self.config_screen.Hide()
     self.waterfall = WaterfallScreen(frame, width, self.data_width, self.graph_width)
@@ -2904,64 +2912,53 @@ The new code supports multiple corrections per band.""")
     vertBox.Add(self.station_screen)
     # Add the spacer
     vertBox.Add(Spacer(frame), 0, wx.EXPAND)
-    # Add the bottom box
-    hBoxA = wx.BoxSizer(wx.HORIZONTAL)
-    vertBox.Add(hBoxA, 0, wx.EXPAND)
-    vertBox.AddSpacer(5)		# Thanks to Christof, DJ4CM
-    # End of vertical box.  Add items to the horizontal box.
-    # Add two sliders on the left
-    margin = 3
-    self.sliderVol = SliderBoxV(frame, 'Vol', self.volumeAudio, 1000, self.ChangeVolume)
-    button_width -= self.sliderVol.width + margin * 2
-    self.ChangeVolume()		# set initial volume level
-    hBoxA.Add(self.sliderVol, 0, wx.LEFT | wx.RIGHT | wx.EXPAND, margin)
-    if Hardware.use_sidetone:
-      self.sliderSto = SliderBoxV(frame, 'STo', 300, 1000, self.ChangeSidetone)
-      button_width -= self.sliderSto.width + margin * 2
-      self.ChangeSidetone()
-      hBoxA.Add(self.sliderSto, 0, wx.LEFT | wx.RIGHT | wx.EXPAND, margin)
-    # Add the sizer for the middle
+    # Add the sizer for the controls
     gap = 2
     gbs = wx.GridBagSizer(gap, gap)
     self.gbs = gbs
-    button_width -= gap * 15
-    hBoxA.Add(gbs, 1, wx.EXPAND, 0)
+    vertBox.Add(gbs, flag=wx.EXPAND)
     gbs.SetEmptyCellSize((5, 5))
-    button_width -= 5
-    # Add three sliders on the right
-    self.sliderYs = SliderBoxV(frame, 'Ys', 0, 160, self.ChangeYscale, True)
-    button_width -= self.sliderYs.width + margin * 2
-    hBoxA.Add(self.sliderYs, 0, wx.LEFT | wx.RIGHT | wx.EXPAND, margin)
-    self.sliderYz = SliderBoxV(frame, 'Yz', 0, 160, self.ChangeYzero, True)
-    button_width -= self.sliderYz.width + margin * 2
-    hBoxA.Add(self.sliderYz, 0, wx.LEFT | wx.RIGHT | wx.EXPAND, margin)
-    self.sliderZo = SliderBoxV(frame, 'Zo', 0, 1000, self.OnChangeZoom)
-    button_width -= self.sliderZo.width + margin * 2
-    hBoxA.Add(self.sliderZo, 0, wx.LEFT | wx.RIGHT | wx.EXPAND, margin)
-    self.sliderZo.SetValue(0)
-    button_width //= 13		# This is our final button size
-    bw = button_width
-    button_width, button_height = self.MakeButtons(frame, gbs, button_width, gap)
+    # Add the bottom spacer
+    vertBox.AddSpacer(5)		# Thanks to Christof, DJ4CM
+    # End of vertical box.
+    self.MakeButtons(frame, gbs)
     minw = width = self.graph.width
-    if button_width > bw:		# The button width was increased
-      width = minw + (button_width - bw) * 12
     maxw = maxh = -1
     minh = 100
     if conf.window_width > 0:
       minw = width = maxw = conf.window_width
     if conf.window_height > 0:
-      minh = maxh = conf.window_height
+      minh = maxh = self.height = conf.window_height
     self.main_frame.SetSizeHints(minw, minh, maxw, maxh)
     self.main_frame.SetClientSizeWH(width, self.height)
-    self.MakeTopRow(frame, gbs, button_width, button_height)
-    self.button_width = button_width
-    self.button_height = button_height
     if hasattr(Hardware, 'pre_open'):       # pre_open() is called before open()
       Hardware.pre_open()
     if configure and self.local_conf.GetWidgets(self, Hardware, conf, frame, gbs, vertBox):
       pass
     elif conf.quisk_widgets:
       self.bottom_widgets = conf.quisk_widgets.BottomWidgets(self, Hardware, conf, frame, gbs, vertBox)
+    if self.bottom_widgets:		# Extend the sliders to the bottom of the screen
+      try:
+        i = self.bottom_widgets.num_rows_added		# No way to get total rows until ver 2.9 !!
+      except:
+        i = 1
+      rows = self.widget_row + i
+      for i in self.slider_columns:
+        item = gbs.FindItemAtPosition((0, i))
+        item.SetSpan((rows, 1))
+    if conf.use_rx_udp == 10:		# Hermes UDP protocol
+      self.add_version = False
+      conf.tx_ip = Hardware.hermes_ip
+      conf.tx_audio_port = conf.rx_udp_port
+    elif conf.use_rx_udp:
+      self.add_version = True		# Add firmware version to config text
+      conf.rx_udp_decimation = 8 * 8 * 8
+      if not conf.tx_ip:
+        conf.tx_ip = conf.rx_udp_ip
+      if not conf.tx_audio_port:
+        conf.tx_audio_port = conf.rx_udp_port + 2
+    else:
+      self.add_version = False
     # Open the hardware.  This must be called before open_sound().
     self.config_text = Hardware.open()
     if self.config_text:
@@ -2975,14 +2972,6 @@ The new code supports multiple corrections per band.""")
         err_msg = QS.mixer_set(dev, numid, value)
         if err_msg:
           print("Mixer", err_msg)
-    if conf.use_rx_udp == 10:		# Hermes UDP protocol
-      self.add_version = False
-      conf.tx_ip = Hardware.hermes_ip
-      conf.tx_audio_port = conf.rx_udp_port
-    elif conf.use_rx_udp:
-      self.add_version = True		# Add firmware version to config text
-    else:
-      self.add_version = False
     QS.capt_channels (conf.channel_i, conf.channel_q)
     QS.play_channels (conf.channel_i, conf.channel_q)
     QS.micplay_channels (conf.mic_play_chan_I, conf.mic_play_chan_Q)
@@ -3069,78 +3058,6 @@ The new code supports multiple corrections per band.""")
         fp.close()
       except:
         pass #traceback.print_exc()
-  def MakeTopRow(self, frame, gbs, button_width, button_height):
-    # Down button
-    b_down = QuiskRepeatbutton(frame, self.OnBtnDownBand, conf.Xbtn_text_range_dn,
-             self.OnBtnUpDnBandDone, use_right=True)
-    gbs.Add(b_down, (0, 8), flag=wx.ALIGN_CENTER)
-    # Up button
-    b_up = QuiskRepeatbutton(frame, self.OnBtnUpBand, conf.Xbtn_text_range_up,
-             self.OnBtnUpDnBandDone, use_right=True)
-    gbs.Add(b_up, (0, 9), flag=wx.ALIGN_CENTER)
-    # Memory buttons
-    b = QuiskPushbutton(frame, self.OnBtnMemSave, conf.Xbtn_text_mem_add)
-    gbs.Add(b, (0, 11), flag=wx.ALIGN_CENTER)
-    b = self.memNextButton = QuiskPushbutton(frame, self.OnBtnMemNext, conf.Xbtn_text_mem_next)
-    b.Enable(False)
-    self.Bind(wx.EVT_RIGHT_DOWN, self.OnRightClickMemory, b)
-    gbs.Add(b, (0, 12), flag=wx.ALIGN_CENTER)
-    b = self.memDeleteButton = QuiskPushbutton(frame, self.OnBtnMemDelete, conf.Xbtn_text_mem_del)
-    b.Enable(False)
-    gbs.Add(b, (0, 13), flag=wx.ALIGN_CENTER)
-    # Favorites buttons
-    b = self.StationNewButton = QuiskPushbutton(frame, self.OnBtnFavoritesNew, conf.Xbtn_text_fav_add)
-    gbs.Add(b, (0, 15), flag=wx.ALIGN_CENTER)
-    b = self.StationNewButton = QuiskPushbutton(frame, self.OnBtnFavoritesShow, conf.Xbtn_text_fav_recall)
-    gbs.Add(b, (0, 16), flag=wx.ALIGN_CENTER)        
-    # RIT button
-    self.ritButton = QuiskCheckbutton(frame, self.OnBtnRit, "RIT")
-    gbs.Add(self.ritButton, (0, 17), flag=wx.ALIGN_CENTER)
-    # RIT slider
-    self.ritScale = SliderBoxHH(frame, '%d ', self.ritFreq, -2000, 2000, self.OnRitScale, True)
-    gbs.Add(self.ritScale, (0, 18), (1, 5), flag=wx.EXPAND)
-    # Frequency display
-    bw, bh = b_down.GetMinSize()
-    self.freqDisplay = FrequencyDisplay(frame, 99999, bh * 15 // 10)
-    self.freqDisplay.Display(self.txFreq + self.VFO)
-    gbs.Add(self.freqDisplay, (0, 0), (1, 6),
-       flag=wx.EXPAND | wx.TOP | wx.BOTTOM, border=self.freqDisplay.border)
-    # Frequency entry
-    e = wx.TextCtrl(frame, -1, '', size=(10, bh), style=wx.TE_PROCESS_ENTER)
-    font = wx.Font(10, wx.FONTFAMILY_SWISS, wx.NORMAL, wx.FONTWEIGHT_NORMAL, face=conf.quisk_typeface)
-    e.SetFont(font)
-    e.SetBackgroundColour(conf.color_entry)
-    e.SetForegroundColour(conf.color_entry_txt)
-    szr = wx.BoxSizer(wx.HORIZONTAL)	# add control to box sizer for centering
-    szr.Add(e, 1, flag=wx.ALIGN_LEFT|wx.ALIGN_CENTER_VERTICAL)
-    gbs.Add(szr, (0, 6), (1, 2), flag = wx.EXPAND|wx.LEFT|wx.RIGHT, border=5)
-    frame.Bind(wx.EVT_TEXT_ENTER, self.FreqEntry, source=e)
-    # S-meter
-    self.smeter = QuiskText(frame, ' S9+23 -166.00 dB ', bh, wx.ALIGN_LEFT, True)
-    b = QuiskPushbutton(frame, self.OnSmeterRightDown, '..')
-    szr = wx.BoxSizer(wx.HORIZONTAL)
-    szr.Add(self.smeter, 1, flag=wx.ALIGN_LEFT|wx.ALIGN_CENTER_VERTICAL)
-    szr.Add(b, 0, flag=wx.ALIGN_RIGHT|wx.ALIGN_CENTER_VERTICAL)
-    gbs.Add(szr, (0, 23), (1, 4), flag=wx.EXPAND)
-    self.smeter.TextCtrl.Bind(wx.EVT_RIGHT_DOWN, self.OnSmeterRightDown)
-    self.smeter.TextCtrl.SetBackgroundColour(conf.color_freq)
-    self.smeter.TextCtrl.SetForegroundColour(conf.color_freq_txt)
-    # Make a popup menu for the s-meter
-    self.smeter_menu = wx.Menu()
-    item = self.smeter_menu.Append(-1, 'S-meter 1')
-    self.Bind(wx.EVT_MENU, self.OnSmeterMeterA, item)
-    item = self.smeter_menu.Append(-1, 'S-meter 5')
-    self.Bind(wx.EVT_MENU, self.OnSmeterMeterB, item)
-    item = self.smeter_menu.Append(-1, 'Frequency 2')
-    self.Bind(wx.EVT_MENU, self.OnSmeterFrequencyA, item)
-    item = self.smeter_menu.Append(-1, 'Frequency 10')
-    self.Bind(wx.EVT_MENU, self.OnSmeterFrequencyB, item)
-    item = self.smeter_menu.Append(-1, 'Audio 1')
-    self.Bind(wx.EVT_MENU, self.OnSmeterAudioA, item)
-    item = self.smeter_menu.Append(-1, 'Audio 5')
-    self.Bind(wx.EVT_MENU, self.OnSmeterAudioB, item)
-    # Make a popup menu for the memory buttons
-    self.memory_menu = wx.Menu()
   def OnSmeterRightDown(self, event):
     try:
       pos = event.GetPosition()		# works for right-click
@@ -3168,24 +3085,46 @@ The new code supports multiple corrections per band.""")
   def OnSmeterAudioB(self, event):
     self.smeter_usage = "audio"
     QS.measure_audio(5)
-  def MakeButtons(self, frame, gbs, button_width, gap):
-    # There are fourteen columns, a small gap column, and then twelve more columns
-    ### Left bank of buttons in fourteen columns
+  def MakeButtons(self, frame, gbs):
+    from quisk_widgets import button_text_width
+    margin = button_text_width
+    # Make one or two sliders on the left
+    self.sliderVol = SliderBoxV(frame, 'Vol', self.volumeAudio, 1000, self.ChangeVolume)
+    self.ChangeVolume()		# set initial volume level
+    if Hardware.use_sidetone:
+      self.sliderSto = SliderBoxV(frame, 'STo', self.sidetone_volume, 1000, self.ChangeSidetone)
+      self.ChangeSidetone()
+    else:
+      self.sliderSto = None
+    # Make four sliders on the right
+    self.ritScale = SliderBoxV(frame, 'Rit', self.ritFreq, 2000, self.OnRitScale, False, themin=-2000)
+    self.sliderYs = SliderBoxV(frame, 'Ys', 0, 160, self.ChangeYscale, True)
+    self.sliderYz = SliderBoxV(frame, 'Yz', 0, 160, self.ChangeYzero, True)
+    self.sliderZo = SliderBoxV(frame, 'Zo', 0, 1000, self.OnChangeZoom)
+    self.sliderZo.SetValue(0)
     flag = wx.EXPAND
-    self.bandBtnGroup = RadioButtonGroup(frame, self.OnBtnBand, conf.bandLabels, None)
-    band_buttons = self.bandBtnGroup.buttons
-    col = 0
-    for b in band_buttons[0:14]:
-      gbs.Add(b, (1, col), flag=flag)
-      col += 1
-    for i in range(col, 14):
-      b = QuiskCheckbutton(frame, None, text='')
-      gbs.Add(b, (1, i), flag=flag)
+    # Add band buttons
+    if conf.button_layout == 'Large screen':
+      self.widget_row = 4		# Next available row for widgets
+      self.bandBtnGroup = RadioButtonGroup(frame, self.OnBtnBand, conf.bandLabels, None)
+    else:
+      self.widget_row = 6		# Next available row for widgets
+      self.bandBtnGroup = RadioBtnPopup(frame, self.OnBtnBand, conf.bandLabels, None)
+    # Add sliders on the left
+    gbs.Add(self.sliderVol, (0, 0), (self.widget_row, 1), flag=wx.EXPAND|wx.LEFT, border=margin)
+    if Hardware.use_sidetone:
+      button_start_col = 2
+      self.slider_columns = [0, 1]
+      gbs.Add(self.sliderSto, (0, 1), (self.widget_row, 1), flag=flag)
+    else:
+      self.slider_columns = [0]
+      button_start_col = 1
     # Receive button row: Mute, AGC
     left_row2 = []
-    b = QuiskCheckbutton(frame, self.OnBtnMute, text='Mute')
+    b = b_mute = QuiskCheckbutton(frame, self.OnBtnMute, text='Mute')
     left_row2.append(b)
-    self.BtnAGC = QuiskSliderButton(frame, self.OnBtnAGC, 'AGC', display=True)   # AGC and Squelch
+    b = QuiskCheckbutton(frame, self.OnBtnAGC, 'AGC')   # AGC and Squelch
+    self.BtnAGC = WrapSlider(b, self.OnBtnAGC, slider_value=self.levelSpot, display=True)
     self.BtnAGC.SetDual(True)
     self.BtnAGC.SetSlider(self.levelSquelch, self.levelOffAGC, self.levelAGC)
     left_row2.append(self.BtnAGC)
@@ -3215,24 +3154,35 @@ The new code supports multiple corrections per band.""")
       b.Enable(False)
     left_row2.append(b)
     if 0:	# Display a color chooser
-      b = QuiskRepeatbutton(frame, self.OnBtnColor, 'Color', use_right=True)
+      #b_test1 = QuiskPushbutton(frame, self.OnBtnColorDialog, 'Color')
+      b_test1 = QuiskRepeatbutton(frame, self.OnBtnColor, 'Color', use_right=True)
     else:
-      b = self.test1Button = QuiskCheckbutton(frame, self.OnBtnTest1, 'Test 1', color=conf.color_test)
-    left_row2.append(b)
+      b_test1 = self.test1Button = QuiskCheckbutton(frame, self.OnBtnTest1, 'Test 1', color=conf.color_test)
+    left_row2.append(b_test1)
     # Transmit button row: Spot
     left_row3=[]
-    b = QuiskSpotButton(frame, self.OnBtnSpot, 'Spot', slider_value=self.levelSpot,
-         color=conf.color_test, slider_min=0, slider_max=1000, display=True)
+    b = QuiskCheckbutton(frame, self.OnBtnSpot, 'Spot', color=conf.color_test)
+    b = WrapSlider(b, self.OnBtnSpot, slider_value=self.levelSpot, display=True)
     if not hasattr(Hardware, 'OnSpot'):
       b.Enable(False)
     left_row3.append(b)
-    b = self.splitButton = QuiskCheckbutton(frame, self.OnBtnSplit, "Splt", use_right=True)
+    # Split button
+    self.split_menu = wx.Menu()
+    item = self.split_menu.Append(-1, 'Reverse Rx and Tx')
+    self.Bind(wx.EVT_MENU, self.OnMenuSplitRev, item)
+    self.split_menu.AppendSeparator()
+    item = self.split_menu.AppendCheckItem(-1, 'Lock Tx Frequency')
+    self.Bind(wx.EVT_MENU, self.OnMenuSplitLock, item)
+    self.split_menu.AppendSeparator()
+    item = self.split_menu.AppendRadioItem(-1, 'Hamlib control Tx')
+    self.Bind(wx.EVT_MENU, self.OnMenuSplitCtlTx, item)
+    item = self.split_menu.AppendRadioItem(-1, 'Hamlib control Rx')
+    self.Bind(wx.EVT_MENU, self.OnMenuSplitCtlRx, item)
+    b = QuiskCheckbutton(frame, self.OnBtnSplit, "Split")
+    self.splitButton = WrapMenu(b, self.split_menu)
     if conf.mouse_tune_method:		# Mouse motion changes the VFO frequency
-      b.Enable(False)
-    left_row3.append(b)
-    self.btnSplitRev = QuiskPushbutton(frame, self.OnBtnSplitRev, 'Rev')
-    self.btnSplitRev.Enable(False)
-    left_row3.append(self.btnSplitRev)
+      self.splitButton.Enable(False)
+    left_row3.append(self.splitButton)
     b = QuiskCheckbutton(frame, self.OnBtnFDX, 'FDX', color=conf.color_test)
     if not conf.add_fdx_button:
       b.Enable(False)
@@ -3252,10 +3202,10 @@ The new code supports multiple corrections per band.""")
       left_row3.append(b)
     # Record and Playback buttons
     b = self.btnTmpRecord = QuiskCheckbutton(frame, self.OnBtnTmpRecord, text=conf.Xbtn_text_rec)
-    left_row3.append(b)
+    #left_row3.append(b)
     b = self.btnTmpPlay = QuiskCheckbutton(frame, self.OnBtnTmpPlay, text=conf.Xbtn_text_play)
     b.Enable(0)
-    left_row3.append(b)
+    #left_row3.append(b)
     self.btn_file_record = QuiskCheckbutton(frame, self.OnBtnFileRecord, conf.Xbtn_text_file_rec)
     if not conf.file_name_audio and not conf.file_name_samples:
       self.btn_file_record.Enable(0)
@@ -3286,16 +3236,29 @@ The new code supports multiple corrections per band.""")
       labels.append('')
     mode_names.sort()
     self.config_screen.favorites.SetModeEditor(mode_names)
-    self.modeButns = RadioButtonGroup(frame, self.OnBtnMode, labels, None)
+    if conf.button_layout == 'Large screen':
+      self.modeButns = RadioButtonGroup(frame, self.OnBtnMode, labels, None)
+    else:
+      labels = ['CWL', 'CWU', 'LSB', 'USB', 'AM', 'FM', 'DGT-U', 'DGT-L', 'DGT-FM', 'DGT-IQ', 'FDV-U', 'IMD']
+      self.modeButns = RadioBtnPopup(frame, self.OnBtnMode, labels, None)
     self.freedv_menu_items = {}
     if conf.add_freedv_button:
       self.freedv_menu = wx.Menu()
+      item = self.freedv_menu.Append(-1, 'Upper sideband')
+      self.Bind(wx.EVT_MENU, self.OnFreedvMenu, item)
+      item = self.freedv_menu.Append(-1, 'Lower sideband')
+      self.Bind(wx.EVT_MENU, self.OnFreedvMenu, item)
+      self.freedv_menu.AppendSeparator()
       for mode, index in conf.freedv_modes:
         item = self.freedv_menu.AppendRadioItem(-1, mode)
         self.freedv_menu_items[index] = item
         self.Bind(wx.EVT_MENU, self.OnFreedvMenu, item)
-      b = QuiskCycleMenuButton(frame, self.freedv_menu, self.OnBtnMode, ('FDV-U', 'FDV-L'), is_radio=True)
-      self.modeButns.ReplaceButton(n_freedv, b)
+      if conf.button_layout == 'Large screen':
+        b = QuiskCheckbutton(frame, self.OnBtnMode, 'FDV-U')
+        self.btnFreeDV = WrapMenu(b, self.freedv_menu)
+        self.modeButns.ReplaceButton(n_freedv, self.btnFreeDV)
+      else:
+        self.btnFreeDV = self.modeButns.AddMenu('FDV-U', self.freedv_menu)
       msg = conf.freedv_tx_msg
       QS.freedv_set_options(mode=conf.freedv_modes[0][1], tx_msg=msg, DEBUG=0, squelch=1)
       try:
@@ -3305,53 +3268,219 @@ The new code supports multiple corrections per band.""")
         ok = 0
       if not ok:
         conf.add_freedv_button = False
-        self.modeButns.GetButtons()[n_freedv].Enable(0)
+        if conf.button_layout == 'Large screen':
+          self.modeButns.GetButtons()[n_freedv].Enable(0)
+        else:
+          self.modeButns.Enable('FDV-U', False)
     if conf.add_imd_button:
       val = 500
       QS.set_imd_level(val)
-      b = QuiskImdButton(frame, text='IMD', color=conf.color_test, slider_value=val, display=True)
-      self.modeButns.ReplaceButton(n_imd, b)
-    right_row1 = self.modeButns.GetButtons()[:]
+      if conf.button_layout == 'Large screen':
+        b = QuiskCheckbutton(frame, None, 'IMD', color=conf.color_test)
+        b = WrapSlider(b, self.OnImdSlider, slider_value=val, display=True)
+        self.modeButns.ReplaceButton(n_imd, b)
+      else:
+        self.modeButns.AddSlider('IMD', self.OnImdSlider, slider_value=val, display=True)
     labels = ('0', '0', '0', '0', '0', '0')
     self.filterButns = RadioButtonGroup(frame, self.OnBtnFilter, labels, None)
-    b = QuiskFilterButton(frame, text=str(self.filterAdjBw1))
+    b = QuiskCheckbutton(frame, None, str(self.filterAdjBw1))
+    b = WrapSlider(b, self.OnBtnFilter, slider_value=self.filterAdjBw1, wintype='filter')
     self.filterButns.ReplaceButton(5, b)
     right_row2 = self.filterButns.GetButtons()
-    labels = (('Graph', 'GraphP1', 'GraphP2'), 'WFall', ('Scope', 'Scope'), 'Config', 'RX Filter', 'Help')
-    self.screenBtnGroup = RadioButtonGroup(frame, self.OnBtnScreen, labels, conf.default_screen)
-    right_row3 = self.screenBtnGroup.GetButtons()
-    col = 0
-    for b in left_row2:
-      gbs.Add(b, (2, col), (1, 2), flag=flag)
-      col += 2
-    col = 0
-    for b in left_row3:
-      if col in (2, 3, 6, 7, 8, 9):		# single column
-        gbs.Add(b, (3, col), flag=flag)
-        col += 1
-      else:								# double column
+    if conf.button_layout == 'Large screen':
+      labels = (('Graph', 'GraphP1', 'GraphP2'), 'WFall', ('Scope', 'Scope'), 'Config', 'RX Filter', 'Help')
+      self.screenBtnGroup = RadioButtonGroup(frame, self.OnBtnScreen, labels, conf.default_screen)
+      right_row3 = self.screenBtnGroup.GetButtons()
+    else:
+      labels = ('Graph', 'GraphP1', 'GraphP2', 'WFall', 'Scope', 'Config', 'RX Filter')
+      self.screenBtnGroup = RadioBtnPopup(frame, self.OnBtnScreen, labels, conf.default_screen)
+    # Top row -----------------
+    # Band down button
+    szr = wx.BoxSizer(wx.HORIZONTAL)	# add control to box sizer for centering
+    b_bandupdown = szr
+    b = QuiskRepeatbutton(frame, self.OnBtnDownBand, conf.Xbtn_text_range_dn,
+             self.OnBtnUpDnBandDone, use_right=True)
+    szr.Add(b, 1, flag=wx.ALIGN_CENTER_VERTICAL|wx.RIGHT, border=1)
+    # Band up button
+    b = QuiskRepeatbutton(frame, self.OnBtnUpBand, conf.Xbtn_text_range_up,
+             self.OnBtnUpDnBandDone, use_right=True)
+    szr.Add(b, 1, flag=wx.ALIGN_CENTER_VERTICAL|wx.LEFT, border=1)
+    # Memory buttons
+    szr = wx.BoxSizer(wx.HORIZONTAL)	# add control to box sizer for centering
+    b_membtn = szr
+    b = QuiskPushbutton(frame, self.OnBtnMemSave, conf.Xbtn_text_mem_add)
+    szr.Add(b, 1, flag=wx.ALIGN_CENTER_VERTICAL|wx.RIGHT, border=1)
+    b = self.memNextButton = QuiskPushbutton(frame, self.OnBtnMemNext, conf.Xbtn_text_mem_next)
+    b.Enable(False)
+    self.Bind(wx.EVT_RIGHT_DOWN, self.OnRightClickMemory, b)
+    szr.Add(b, 1, flag=wx.ALIGN_CENTER_VERTICAL|wx.LEFT|wx.RIGHT, border=1)
+    b = self.memDeleteButton = QuiskPushbutton(frame, self.OnBtnMemDelete, conf.Xbtn_text_mem_del)
+    b.Enable(False)
+    szr.Add(b, 1, flag=wx.ALIGN_CENTER_VERTICAL|wx.LEFT, border=1)
+    # Favorites buttons
+    szr = wx.BoxSizer(wx.HORIZONTAL)	# add control to box sizer for centering
+    b_fav = szr
+    b = self.StationNewButton = QuiskPushbutton(frame, self.OnBtnFavoritesNew, conf.Xbtn_text_fav_add)
+    szr.Add(b, 1, flag=wx.ALIGN_CENTER_VERTICAL|wx.RIGHT, border=1)
+    b = self.StationNewButton = QuiskPushbutton(frame, self.OnBtnFavoritesShow, conf.Xbtn_text_fav_recall)
+    szr.Add(b, 1, flag=wx.ALIGN_CENTER_VERTICAL|wx.LEFT, border=1)
+    # Temporary play and record
+    szr = wx.BoxSizer(wx.HORIZONTAL)	# add control to box sizer for centering
+    b_tmprec = szr
+    szr.Add(self.btnTmpRecord, 1, flag=wx.ALIGN_CENTER_VERTICAL|wx.RIGHT, border=1)
+    szr.Add(self.btnTmpPlay, 1, flag=wx.ALIGN_CENTER_VERTICAL|wx.LEFT, border=1)
+    # RIT button
+    szr = wx.BoxSizer(wx.HORIZONTAL)	# add control to box sizer for centering
+    b_rit = szr
+    self.ritButton = QuiskCheckbutton(frame, self.OnBtnRit, "RIT")
+    szr.Add(self.ritButton, 1, flag=wx.ALIGN_CENTER_VERTICAL|wx.RIGHT, border=1)
+    self.ritButton.SetLabel("RIT %d" % self.ritFreq)
+    self.ritButton.Refresh()
+    # Frequency display
+    bw, bh = b_mute.GetMinSize()
+    b_freqdisp = self.freqDisplay = FrequencyDisplay(frame, 99999, bh * 15 // 10)
+    self.freqDisplay.Display(self.txFreq + self.VFO)
+    # Frequency entry
+    if conf.button_layout == 'Large screen':
+      e = wx.TextCtrl(frame, -1, '', size=(10, bh), style=wx.TE_PROCESS_ENTER)
+      font = wx.Font(10, wx.FONTFAMILY_SWISS, wx.NORMAL, wx.FONTWEIGHT_NORMAL, face=conf.quisk_typeface)
+      e.SetFont(font)
+      e.SetBackgroundColour(conf.color_entry)
+      e.SetForegroundColour(conf.color_entry_txt)
+      szr = wx.BoxSizer(wx.HORIZONTAL)	# add control to box sizer for centering
+      b_freqenter = szr
+      szr.Add(e, 1, flag=wx.ALIGN_LEFT|wx.ALIGN_CENTER_VERTICAL)
+      frame.Bind(wx.EVT_TEXT_ENTER, self.FreqEntry, source=e)
+    # S-meter
+    self.smeter = QuiskText(frame, ' S9+23 -166.00 dB ', bh, wx.ALIGN_LEFT, True)
+    b = QuiskPushbutton(frame, self.OnSmeterRightDown, '..')
+    szr = wx.BoxSizer(wx.HORIZONTAL)
+    b_smeter = szr
+    szr.Add(self.smeter, 1, flag=wx.ALIGN_LEFT|wx.ALIGN_CENTER_VERTICAL)
+    szr.Add(b, 0, flag=wx.ALIGN_RIGHT|wx.ALIGN_CENTER_VERTICAL)
+    self.smeter.TextCtrl.Bind(wx.EVT_RIGHT_DOWN, self.OnSmeterRightDown)
+    self.smeter.TextCtrl.SetBackgroundColour(conf.color_freq)
+    self.smeter.TextCtrl.SetForegroundColour(conf.color_freq_txt)
+    # Make a popup menu for the s-meter
+    self.smeter_menu = wx.Menu()
+    item = self.smeter_menu.Append(-1, 'S-meter 1')
+    self.Bind(wx.EVT_MENU, self.OnSmeterMeterA, item)
+    item = self.smeter_menu.Append(-1, 'S-meter 5')
+    self.Bind(wx.EVT_MENU, self.OnSmeterMeterB, item)
+    item = self.smeter_menu.Append(-1, 'Frequency 2')
+    self.Bind(wx.EVT_MENU, self.OnSmeterFrequencyA, item)
+    item = self.smeter_menu.Append(-1, 'Frequency 10')
+    self.Bind(wx.EVT_MENU, self.OnSmeterFrequencyB, item)
+    item = self.smeter_menu.Append(-1, 'Audio 1')
+    self.Bind(wx.EVT_MENU, self.OnSmeterAudioA, item)
+    item = self.smeter_menu.Append(-1, 'Audio 5')
+    self.Bind(wx.EVT_MENU, self.OnSmeterAudioB, item)
+    # Make a popup menu for the memory buttons
+    self.memory_menu = wx.Menu()
+    # Place the buttons on the screen
+    if conf.button_layout == 'Large screen':
+      # There are fourteen columns, a small gap column, and then twelve more columns
+      band_buttons = self.bandBtnGroup.buttons
+      if len(band_buttons) <= 7:
+        bmax = 7
+        span = 2
+      else:
+        bmax = 14
+        span = 1
+      col = 0
+      for b in band_buttons[0:bmax]:
+        gbs.Add(b, (1, button_start_col + col), (1, span), flag=flag)
+        col += span
+      while col < 14:
+        b = QuiskCheckbutton(frame, None, text='')
+        gbs.Add(b, (1, button_start_col + col), (1, span), flag=flag)
+        col += span
+      col = button_start_col
+      for b in left_row2:
+        gbs.Add(b, (2, col), (1, 2), flag=flag)
+        col += 2
+      col = button_start_col
+      for b in left_row3:
         gbs.Add(b, (3, col), (1, 2), flag=flag)
         col += 2
-    col = 15
-    for b in right_row1:
-      if col in (19, 20):		# single column
-        gbs.Add(b, (1, col), flag=flag)
-        col += 1
-      else:						# double column
-        gbs.Add(b, (1, col), (1, 2), flag=flag)
+      col = 15
+      for b in  self.modeButns.GetButtons():
+        if col in (19, 20):		# single column
+          gbs.Add(b, (1, button_start_col + col), flag=flag)
+          col += 1
+        else:						# double column
+          gbs.Add(b, (1, button_start_col + col), (1, 2), flag=flag)
+          col += 2
+      col = button_start_col + 15
+      for i in range(0, 6):
+        gbs.Add(right_row2[i], (2, col), (1, 2), flag=flag)
+        gbs.Add(right_row3[i], (3, col), (1, 2), flag=flag)
         col += 2
-    col = 15
-    for i in range(0, 6):
-      gbs.Add(right_row2[i], (2, col), (1, 2), flag=flag)
-      gbs.Add(right_row3[i], (3, col), (1, 2), flag=flag)
-      col += 2
-    for i in range(14):
-      gbs.AddGrowableCol(i,1)
-    for i in range(15, 27):
-      gbs.AddGrowableCol(i,1)
-    w, height = right_row1[0].GetMinSize()
-    self.widget_row = 4		# Next available row for widgets
-    return button_width, height
+      gbs.Add(b_freqdisp, (0, button_start_col), (1, 6),
+         flag=wx.EXPAND | wx.TOP | wx.BOTTOM, border=self.freqDisplay.border)
+      gbs.Add(b_freqenter,  (0, button_start_col + 6), (1, 2), flag = wx.EXPAND|wx.LEFT|wx.RIGHT, border=5)
+      gbs.Add(b_bandupdown, (0, button_start_col + 8), (1, 2), flag=wx.EXPAND)
+      gbs.Add(b_membtn,     (0, button_start_col + 11), (1, 3), flag = wx.EXPAND)
+      gbs.Add(b_fav,        (0, button_start_col + 15), (1, 2), flag=wx.EXPAND)        
+      gbs.Add(b_tmprec,     (0, button_start_col + 17), (1, 4), flag=wx.EXPAND)        
+      gbs.Add(b_smeter,     (0, button_start_col + 21), (1, 4), flag=wx.EXPAND)
+      gbs.Add(b_rit,        (0, button_start_col + 25), (1, 2), flag=wx.EXPAND)
+      col = button_start_col + 28
+      self.slider_columns += [col, col + 1, col + 2, col + 3]
+      gbs.Add(self.ritScale, (0, col    ), (self.widget_row, 1), flag=wx.EXPAND|wx.LEFT, border=margin)
+      gbs.Add(self.sliderYs, (0, col + 1), (self.widget_row, 1), flag=flag)
+      gbs.Add(self.sliderYz, (0, col + 2), (self.widget_row, 1), flag=flag)
+      gbs.Add(self.sliderZo, (0, col + 3), (self.widget_row, 1), flag=flag)
+      for i in range(button_start_col, button_start_col + 14):
+        gbs.AddGrowableCol(i,1)
+      for i in range(button_start_col + 15, button_start_col + 27):
+        gbs.AddGrowableCol(i,1)
+    else:
+      gbs.Add(b_freqdisp, (0, button_start_col), (1, 6),
+         flag=wx.EXPAND | wx.TOP | wx.BOTTOM, border=self.freqDisplay.border)
+      gbs.Add(b_bandupdown, (0, button_start_col + 6), (1, 2), flag=wx.EXPAND)
+      gbs.Add(b_smeter,    (0, button_start_col + 8), (1, 4), flag=wx.EXPAND)
+
+      gbs.Add(self.bandBtnGroup.GetPopControl(),   (1, button_start_col), (1, 2), flag=flag)
+      gbs.Add(self.modeButns.GetPopControl(),      (3, button_start_col), (1, 2), flag=flag)
+      gbs.Add(self.screenBtnGroup.GetPopControl(), (4, button_start_col), (1, 2), flag=flag)
+      b = QuiskCheckbutton(frame, self.OnBtnHelp, 'Help')
+      gbs.Add(b, (5, button_start_col), (1, 2), flag=flag)
+
+      gbs.Add(b_membtn, (1, button_start_col + 2), (1, 3), flag = wx.EXPAND)
+      gbs.Add(b_fav,    (1, button_start_col + 5), (1, 2), flag = wx.EXPAND)
+      gbs.Add(b_tmprec, (1, button_start_col + 7), (1, 2), flag=wx.EXPAND)        
+      b = QuiskPushbutton(frame, None, '')
+      gbs.Add(b,        (1, button_start_col + 9), (1, 1), flag=wx.EXPAND)        
+      gbs.Add(b_rit,    (1, button_start_col + 10), (1, 2), flag=wx.EXPAND)        
+
+      row = 2
+      col = button_start_col
+      for b in self.filterButns.GetButtons():
+        gbs.Add(b, (row, col), (1, 2), flag=flag)
+        col += 2
+
+      b = QuiskPushbutton(frame, None, '')
+      buttons = left_row2 + left_row3
+      buttons.remove(b_test1)
+      buttons += [b_test1, b]
+      row = 3
+      col = 2
+      for b in buttons:
+        gbs.Add(b, (row, button_start_col + col), (1, 2), flag=flag)
+        col += 2
+        if col >= 12:
+          row += 1
+          col = 2
+      col = button_start_col + 12
+      self.slider_columns += [col, col + 1, col + 2, col + 3]
+      gbs.Add(self.ritScale, (0, col), (self.widget_row, 1), flag=wx.EXPAND|wx.LEFT, border=margin)
+      gbs.Add(self.sliderYs, (0, col + 1), (self.widget_row, 1), flag=flag)
+      gbs.Add(self.sliderYz, (0, col + 2), (self.widget_row, 1), flag=flag)
+      gbs.Add(self.sliderZo, (0, col + 3), (self.widget_row, 1), flag=flag)
+      for i in range(button_start_col, button_start_col + 12):
+        gbs.AddGrowableCol(i,1)
+    self.button_start_col = button_start_col
   def MeasureAudioVoltage(self):
     v = QS.measure_audio(-1)
     t = "%11.3f" % v
@@ -3548,6 +3677,16 @@ The new code supports multiple corrections per band.""")
   def OnFreedvMenu(self, event):
     idd = event.GetId()
     text = self.freedv_menu.GetLabel(idd)
+    if text[0:5] == 'Upper':
+      self.btnFreeDV.SetLabel('FDV-U')
+      self.btnFreeDV.Refresh()
+      self.OnBtnMode('FDV-U')
+      return
+    if text[0:5] == 'Lower':
+      self.btnFreeDV.SetLabel('FDV-L')
+      self.btnFreeDV.Refresh()
+      self.OnBtnMode('FDV-L')
+      return
     for mode, index in conf.freedv_modes:
       if mode == text:
         break
@@ -3560,6 +3699,11 @@ The new code supports multiple corrections per band.""")
       pos = (self.width/2, self.height/2)
       dlg = wx.MessageDialog(self.main_frame, "No codec2 support for mode " + text, "FreeDV Modes", wx.OK, pos)
       dlg.ShowModal()
+  def OnBtnHelp(self, event):
+    if event.GetEventObject().GetValue():
+      self.OnBtnScreen(None, 'Help')
+    else:
+      self.OnBtnScreen(None, self.screenBtnGroup.GetLabel())
   def OnBtnScreen(self, event, name=None):
     if event is not None:
       win = event.GetEventObject()
@@ -3733,7 +3877,7 @@ The new code supports multiple corrections per band.""")
   def ChangeVolume(self, event=None):
     # Caution: event can be None
     value = self.sliderVol.GetValue()
-    self.volumeAudio = 1000 - value
+    self.volumeAudio = value
     # Simulate log taper pot
     B = 50.0		# This controls the gain at mid-volume
     x = (B ** (value/1000.0) - 1.0) / (B - 1.0)		# x is 0.0 to 1.0
@@ -3753,21 +3897,17 @@ The new code supports multiple corrections per band.""")
       Hardware.ChangeSidetone(x)
   def OnRitScale(self, event=None):	# Called when the RIT slider is moved
     # Caution: event can be None
+    value = self.ritScale.GetValue()
+    self.ritButton.SetLabel("RIT %d" % value)
+    self.ritButton.Refresh()
     if self.ritButton.GetValue():
-      value = self.ritScale.GetValue()
       value = int(value)
       self.ritFreq = value
       QS.set_tune(self.rxFreq + self.ritFreq, self.txFreq)
       QS.set_sidetone(self.sidetone_volume, self.sidetone_0to1, self.ritFreq, conf.keyupDelay)
   def OnBtnSplit(self, event):	# Called when the Split check button is pressed
     self.split_rxtx = self.splitButton.GetValue()
-    self.btnSplitRev.Enable(self.split_rxtx)
     if self.split_rxtx:
-      if self.splitButton.direction > 0:	# Left button was used
-        self.split_locktx = False
-      else:									# Right button was used
-        self.split_locktx = True
-        self.splitButton.SetLabel("LkSp")
       QS.set_split_rxtx(conf.split_rxtx)
       self.rxFreq = self.oldRxFreq
       d = self.sample_rate * 49 // 100	# Move rxFreq on-screen
@@ -3776,17 +3916,28 @@ The new code supports multiple corrections per band.""")
       elif self.rxFreq > d:
         self.rxFreq = d
     else:
-      self.split_locktx = False
-      self.splitButton.SetLabel("Splt")
       QS.set_split_rxtx(0)
       self.oldRxFreq = self.rxFreq
       self.rxFreq = self.txFreq
     self.screen.SetTxFreq(self.txFreq, self.rxFreq)
     QS.set_tune(self.rxFreq + self.ritFreq, self.txFreq)
-  def OnBtnSplitRev(self, event):	# Called when the Split Reverse button is pressed
-    rx = self.rxFreq
-    self.rxFreq = self.txFreq
-    self.ChangeHwFrequency(rx, self.VFO, 'FreqEntry')
+  def OnMenuSplitLock(self, event):
+    if self.split_locktx:
+      self.split_locktx = False
+      self.splitButton.SetLabel("Split")
+    else:
+      self.split_locktx = True
+      self.splitButton.SetLabel("LkSplit")
+    self.splitButton.Refresh()
+  def OnMenuSplitRev(self, event):	# Called when the Split Reverse button is pressed
+    if self.split_rxtx:
+      rx = self.rxFreq
+      self.rxFreq = self.txFreq
+      self.ChangeHwFrequency(rx, self.VFO, 'FreqEntry')
+  def OnMenuSplitCtlTx(self, event):
+    self.split_hamlib_tx = True
+  def OnMenuSplitCtlRx(self, event):
+    self.split_hamlib_tx = False
   def OnBtnRit(self, event=None):	# Called when the RIT check button is pressed
     # Caution: event can be None
     if self.ritButton.GetValue():
@@ -3801,6 +3952,8 @@ The new code supports multiple corrections per band.""")
     else:
       self.ritButton.SetValue(0)
     self.ritScale.SetValue(freq)
+    self.ritButton.SetLabel("RIT %d" % freq)
+    self.ritButton.Refresh()
     self.OnBtnRit()
   def OnBtnFDX(self, event):
     btn = event.GetEventObject()
@@ -3812,11 +3965,14 @@ The new code supports multiple corrections per band.""")
       QS.set_fdx(0)
       if hasattr(Hardware, 'OnBtnFDX'):
         Hardware.OnBtnFDX(0)
+  def OnImdSlider(self, event):
+    value = event.GetEventObject().slider_value
+    QS.set_imd_level(value)
   def OnBtnSpot(self, event):
     btn = event.GetEventObject()
     self.levelSpot = btn.slider_value
     if btn.GetValue():
-      value = btn.slider_min + btn.slider_max - btn.slider_value	# slider values are backwards in Wx
+      value = btn.slider_value
     else:
       value = -1
     QS.set_spot_level(value)
@@ -3866,6 +4022,16 @@ The new code supports multiple corrections per band.""")
       QS.add_tone(0)
   def OnBtnTest2(self, event):
     return
+  def OnBtnColorDialog(self, event):
+    btn = event.GetEventObject()
+    dlg = wx.ColourDialog(self.main_frame)
+    dlg.GetColourData().SetChooseFull(True)
+    if dlg.ShowModal() == wx.ID_OK:
+      data = dlg.GetColourData()
+      print (data.GetColour().Get())
+      btn.text_color = data.GetColour().Get()
+      btn.Refresh()
+    dlg.Destroy()
   def OnBtnColor(self, event):
     if not self.color_list:
       clist = wx.lib.colourdb.getColourInfoList()
@@ -3886,10 +4052,11 @@ The new code supports multiple corrections per band.""")
       self.color_index = len(self.color_list) -1
     color = self.color_list[self.color_index][1]
     print(self.color_index, color)
-    self.main_frame.SetBackgroundColour(color)
-    self.main_frame.Refresh()
-    self.screen.Refresh()
-    btn.SetBackgroundColour(color)
+    #self.main_frame.SetBackgroundColour(color)
+    #self.main_frame.Refresh()
+    #self.screen.Refresh()
+    #btn.SetBackgroundColour(color)
+    btn.text_color = color
     btn.Refresh()
   def OnBtnAGC(self, event):    # This is a combined AGC and Squelch button
     btn = event.GetEventObject()
@@ -3899,8 +4066,7 @@ The new code supports multiple corrections per band.""")
     if self.mode == 'FM':   # This is a Squelch button
       self.use_squelch = btn.GetValue()
       if self.use_squelch:
-        value = 1000 - self.levelSquelch		# slider values are backwards in Wx
-        QS.set_squelch(value / 12.0 - 120.0)
+        QS.set_squelch(self.levelSquelch / 12.0 - 120.0)
       else:
         QS.set_squelch(-999.0)
     else:                   # This is an AGC button
@@ -3910,7 +4076,7 @@ The new code supports multiple corrections per band.""")
       else:
         level = self.levelOffAGC
       # Simulate log taper pot.  Volume is 0 to 1.
-      x = (10.0 ** (float(1000 - level) * 0.003000434077) - 0.99999) / 1000.0
+      x = (10.0 ** (float(level) * 0.003000434077) - 0.99999) / 1000.0
       QS.set_agc(x * conf.agc_max_gain)
   def OnBtnAutoNotch(self, event):
     if event.GetEventObject().GetValue():
@@ -4527,7 +4693,12 @@ The new code supports multiple corrections per band.""")
 
 def main():
   """If quisk is installed as a package, you can run it with quisk.main()."""
-  while application is None or application.startup_quisk:
+  if application is None:
+    App()
+    application.startup_quisk = False
+    application.MainLoop()
+  while application.startup_quisk:
+    time.sleep(1.0)
     App()
     application.startup_quisk = False
     application.MainLoop()

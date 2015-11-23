@@ -181,7 +181,7 @@ bandAmplPhase = {}				# Empty dictionary to start
 # For the N2ADR 2010 transceiver described in QEX, and for the improved version HiQSDR,
 # see the sample config file in the hiqsdr package directory, and set these:
 
-## use_rx_udp			Hardware UDP type, integer choice
+## use_rx_udp			Hardware type, integer choice
 # This is the type of UDP hardware.  Use 1 for the original hardware by N2ADR.
 # Use 2 for the HiQSDR.
 #use_rx_udp = 2
@@ -207,10 +207,11 @@ HiQSDR_BandDict = {
 	'160':1, '80':2, '40':3, '30':4, '20':5, '15':6, '17':7,
 	'12':8, '10':9, '6':10, '500k':11, '137k':12 }
 
-cw_delay = 0        # the delay for CW
-#
+## cw_delay                 CW Delay, integer
+# This is the delay for CW from 0 to 255.
+cw_delay = 0
 
-## rx_udp_ip				Hardware IP address, text
+## rx_udp_ip				IP address, text
 # This is the IP address of your hardware.
 # For FPGA firmware version 1.4 and newer, and if enabled, the hardware is set to the IP address you enter here.
 # For older firmware, the IP address is programmed into the FPGA, and you must enter that address.
@@ -261,11 +262,11 @@ sndp_active = True
 # Note: Setting the IP fails for the Hermes-Lite.
 # You can set these options:
 
-## use_rx_udp			Hardware UDP type, integer choice
+## use_rx_udp			Hardware type, integer choice
 # This is the type of UDP hardware.  Use 10 for the Hermes protocol.
 #use_rx_udp = 10
 
-## rx_udp_ip				Hardware IP address, text
+## rx_udp_ip				IP address, text
 # This is the IP address of your hardware.  Or enter nothing to use DHCP.
 #rx_udp_ip = ""
 #rx_udp_ip = "192.168.1.196"
@@ -325,11 +326,11 @@ Hermes_BandDict = {
 ## widgets_file_name			Widget file name, rfile
 #widgets_file_name = ''
 
-## use_rx_udp			Hardware UDP type, integer choice
+## use_rx_udp			Hardware type, integer choice
 # This is the type of UDP hardware.  Use 10 for the Hermes protocol.
 #use_rx_udp = 10
 
-## rx_udp_ip				Hardware IP address, text
+## rx_udp_ip				IP address, text
 # This is the IP address of your hardware.  Or enter nothing to use DHCP.
 #rx_udp_ip = ""
 #rx_udp_ip = "192.168.1.196"
@@ -401,7 +402,7 @@ hermes_board_id = -1
 # ## widgets_file_name			Widget file name, rfile
 # #widgets_file_name = ''
 
-# ## use_rx_udp			Hardware UDP type, integer choice
+# ## use_rx_udp			Hardware type, integer choice
 # # This is the type of UDP hardware.  Use 2 for the HiQSDR protocol.
 # #use_rx_udp = 2
 
@@ -992,6 +993,13 @@ window_posX = -1
 window_posY = -1
 #window_posY = 0
 
+## button_layout				Button layout, text choice
+# This option controls how many buttons are displayed on the screen.  The large screen
+# layout is meant for a PC.  The small screen layout is meant for small touch screens, and
+# small screens used in embedded systems.
+button_layout = 'Large screen'
+#button_layout = 'Small screen'
+
 
 # These are the initial values for the Y-scale and Y-zero sliders for each screen.
 # The sliders go from zero to 160.
@@ -1229,22 +1237,22 @@ Tsym_stat_mem = 'M'
 Tsym_stat_dx = 'Dx'
 #
 # These are the Unicode symbols to display on buttons.  Thanks to Christof, DJ4CM.
-Ubtn_text_range_dn = unichr(0x2190)      # Down band, left arrow
-Ubtn_text_range_up = unichr(0x2192)      # Up band, right arrow
-Ubtn_text_play = unichr(0x25BA)          # Play button
-Ubtn_text_rec = unichr(0x25CF)           # Record button, a filled dot
-Ubtn_text_file_rec = "File " + unichr(0x25CF)            # Record to file
-Ubtn_text_file_play = "File " + unichr(0x25BA)           # Play from file
-Ubtn_text_fav_add    = unichr(0x2605) + unichr(0x2191)   # Add to favorites
-Ubtn_text_fav_recall = unichr(0x2605) + unichr(0x2193)   # Jump to favorites screen
-Ubtn_text_mem_add  = unichr(0x24C2) + unichr(0x2191)     # Add to memory
-Ubtn_text_mem_next = unichr(0x24C2) + unichr(0x27B2)     # Next memory
-Ubtn_text_mem_del  = unichr(0x24C2) + unichr(0x2613)     # Delete from memory
+Ubtn_text_range_dn = unichr(0x2B07)						# Down band, left arrow
+Ubtn_text_range_up = unichr(0x2B06)						# Up band, right arrow
+Ubtn_text_play = unichr(0x25BA)							# Play button
+Ubtn_text_rec = unichr(0x25CF)							# Record button, a filled dot
+Ubtn_text_file_rec = "File " + unichr(0x25CF)           # Record to file
+Ubtn_text_file_play = "File " + unichr(0x25BA)          # Play from file
+Ubtn_text_fav_add    = unichr(0x2605) + unichr(0x2191)  # Add to favorites
+Ubtn_text_fav_recall = unichr(0x2605) + unichr(0x2193)  # Jump to favorites screen
+Ubtn_text_mem_add  = unichr(0x24C2) + unichr(0x2191)    # Add to memory
+Ubtn_text_mem_next = unichr(0x24C2) + unichr(0x27B2)    # Next memory
+Ubtn_text_mem_del  = unichr(0x24C2) + unichr(0x2613)    # Delete from memory
 # These are the text symbols to display on buttons.
 Tbtn_text_range_dn = "Dn"
 Tbtn_text_range_up = "Up"
-Tbtn_text_play = "Play"
-Tbtn_text_rec = "Rec"
+Tbtn_text_play = "Tmp Play"
+Tbtn_text_rec = "Tmp Rec"
 Tbtn_text_file_rec = "File Rec"
 Tbtn_text_file_play = "File Play"
 Tbtn_text_fav_add    = ">Fav"
@@ -1260,6 +1268,7 @@ decorate_buttons = True
 
 btn_text_cycle = unichr(0x21B7)			# Character to display on multi-push buttons
 btn_text_cycle_small = unichr(0x2193)	# Smaller version when there is little space
+btn_text_switch = unichr(0x21C4)		# Character to switch left-right
 
 
 
@@ -1287,6 +1296,7 @@ color_entry			= color_freq			# frequency entry box
 color_entry_txt     = 'black'		        # text color of entry box
 color_enable		= 'black'				# text color for an enabled button
 color_disable		= 'white'				# text color for a disabled button
+color_popchoice		= 'maroon'			# text color for button that pops up a row of buttons
 color_bandwidth		= 'lemonchiffon2'		# color for bandwidth display; thanks to WB4JFI
 #color_bandwidth = 'lemonchiffon3'
 color_txline		= 'red'					# vertical line color for tx in graph

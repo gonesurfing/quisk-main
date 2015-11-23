@@ -12,18 +12,20 @@ class BottomWidgets:	# Add extra widgets to the bottom of the screen
     self.config = conf
     self.hardware = hardware
     self.application = app
+    self.start_row = app.widget_row			# The first available row
+    self.start_col = app.button_start_col	# The start of the button columns
     if hardware.hermes_board_id == 0x06:		# Hermes-Lite
       self.Widgets_0x06(app, hardware, conf, frame, gbs, vertBox)
     else:
       self.Widgets_dflt(app, hardware, conf, frame, gbs, vertBox)
   def Widgets_0x06(self, app, hardware, conf, frame, gbs, vertBox):
-    row = 4			# The next available row
     b = app.QuiskCheckbutton(frame, self.OnAGC, 'RfAgc')
-    gbs.Add(b, (row, 0), (1, 2), flag=wx.EXPAND)
+    gbs.Add(b, (self.start_row, self.start_col), (1, 2), flag=wx.EXPAND)
     init = 10
     sl = app.SliderBoxHH(frame, 'RfLna %d dB', init, -12, 48, self.OnLNA, True)
     hardware.ChangeLNA(init)
-    gbs.Add(sl, (row, 2), (1, 8), flag=wx.EXPAND)
+    gbs.Add(sl, (self.start_row, self.start_col + 2), (1, 8), flag=wx.EXPAND)
+    self.num_rows_added = 1
   def Widgets_dflt(self, app, hardware, conf, frame, gbs, vertBox):
     pass
   def OnAGC(self, event):

@@ -1,3 +1,41 @@
+Quisk Version 4.0.0  November 2015
+==================================
+This is a major new release of Quisk.  Comments, suggestions and bug reports are welcome.
+There is a lot of new code here, but remember that the prior version is still on my web page.
+
+Quisk now has two new screen layouts.  The "large screen" layout is the default, and is designed for
+PCs.  It uses the full screen width in order to show as wide a graph as possible, and to make
+mouse tuning easy.  The new layout "small screen" is designed for small screens such as touch screens
+used for single-board computers.  But "small screen" can also be used by those with sight
+impairment, or by those who run Quisk at narrow widths on a PC. It has more button rows;
+and the band, mode and screen select buttons are hidden behind three master buttons.  To select
+the band, for example, you press the band master button, and a list of bands pops up; then select
+the band.  Press the Help button to read the new help file.  Set button_layout = "Small screen"
+in your config file; but see below.
+
+If you have written your own quisk_widgets.py file to add custom widgets to the bottom of your
+screen, you will need to change this file to accommodate both layouts. See n2adr/quisk_widgets.py
+and hermes/quisk_widgets.py for examples.
+
+Quisk now has configuration screens to display and edit its settings.  For most users, this makes
+config files obsolete.  Press the Config button and see the additional tabs, and be sure to read the
+config help tab.  Furthermore, Quisk can save different settings for different radios.  For example,
+you can have a block of settings named HiQSDR and a separate block named SoftRock.  When Quisk starts,
+it can ask which radio you want to use.  This feature should appeal to those who have trouble dealing
+with config files, and to advanced users with multiple radios.
+
+If you do nothing, Quisk operates as before, and the settings feature does nothing.  You have to
+turn it on by making a named block of settings; a "radio".  If you make some changes that
+cause Quisk to fail to start, just start Quisk with the "-a" or "--ask" option, and specify
+"ConfigFileRadio" as the startup radio.  The "ConfigFileRadio" is the radio as specified in the
+config file, and no internal settings are used.  This should not happen, but the code is very new, and
+I expect that it needs more work.
+
+The settings screens take the place of config files, although config files can still be used.
+After editing settings, it is necessary to restart Quisk to make the settings happen.  Press the
+"Restart" button.  Some changes will always require a restart, such as the button layout. But I
+expect to make many settings happen instantly without a restart.
+
 Quisk Version 3.7.8  November 2015
 ==================================
 Foreign users can have trouble with their config directory on Windows because the "Documents"

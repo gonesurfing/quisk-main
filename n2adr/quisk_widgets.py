@@ -13,29 +13,30 @@ class BottomWidgets:	# Add extra widgets to the bottom of the screen
     self.config = conf
     self.hardware = hardware
     self.application = app
-    row = app.widget_row			# The next available row
+    start_row = app.widget_row			# The first available row
+    start_col = app.button_start_col	# The start of the button columns
     b = app.QuiskCycleCheckbutton(frame, self.OnAntTuner, ('Antenna', 'Ant 0', 'Ant 1'))
     bw, bh = b.GetMinSize()
-    gbs.Add(b, (row, 0), (1, 2), flag=wx.EXPAND)
-    b = app.QuiskPushbutton(frame, self.OnAntTuner, 'L+')
-    b.Enable(0)
-    gbs.Add(b, (row, 2), (1, 2), flag=wx.EXPAND)
-    b = app.QuiskPushbutton(frame, self.OnAntTuner, 'L-')
-    b.Enable(0)
-    gbs.Add(b, (row, 4), (1, 2), flag=wx.EXPAND)
-    b = app.QuiskPushbutton(frame, self.OnAntTuner, 'C+')
-    b.Enable(0)
-    gbs.Add(b, (row, 6), (1, 2), flag=wx.EXPAND)
-    b = app.QuiskPushbutton(frame, self.OnAntTuner, 'C-')
-    b.Enable(0)
-    gbs.Add(b, (row, 8), (1, 2), flag=wx.EXPAND)
-    b = app.QuiskPushbutton(frame, self.OnAntTuner, 'Save')
-    b.Enable(0)
-    gbs.Add(b, (row, 10), (1, 2), flag=wx.EXPAND)
+    gbs.Add(b, (start_row, start_col), (1, 2), flag=wx.EXPAND)
+    #b = app.QuiskPushbutton(frame, self.OnAntTuner, 'L+')
+    #b.Enable(0)
+    #gbs.Add(b, (start_row, start_col + 2), (1, 2), flag=wx.EXPAND)
+    #b = app.QuiskPushbutton(frame, self.OnAntTuner, 'L-')
+    #b.Enable(0)
+    #gbs.Add(b, (start_row, start_col + 4), (1, 2), flag=wx.EXPAND)
+    #b = app.QuiskPushbutton(frame, self.OnAntTuner, 'C+')
+    #b.Enable(0)
+    #gbs.Add(b, (start_row, start_col + 6), (1, 2), flag=wx.EXPAND)
+    #b = app.QuiskPushbutton(frame, self.OnAntTuner, 'C-')
+    #b.Enable(0)
+    #gbs.Add(b, (start_row, start_col + 8), (1, 2), flag=wx.EXPAND)
+    #b = app.QuiskPushbutton(frame, self.OnAntTuner, 'Save')
+    #b.Enable(0)
+    #gbs.Add(b, (start_row, start_col + 10), (1, 2), flag=wx.EXPAND)
     self.swr_label = app.QuiskText(frame, 'Watts 000   SWR 10.1  Zh Ind 22 Cap 33   Freq 28100 (7777)', bh)
-    gbs.Add(self.swr_label, (row, 15), (1, 10), flag=wx.EXPAND)
-    b = app.QuiskCheckbutton(frame, None, text='')
-    gbs.Add(b, (row, 25), (1, 2), flag=wx.EXPAND)
+    gbs.Add(self.swr_label, (start_row, start_col + 2), (1, 10), flag=wx.EXPAND)
+    #b = app.QuiskCheckbutton(frame, None, text='')
+    #gbs.Add(b, (start_row, start_col + 25), (1, 2), flag=wx.EXPAND)
 #  Example of a horizontal slider:
 #    lab = wx.StaticText(frame, -1, 'Preamp', style=wx.ALIGN_CENTER)
 #    gbs.Add(lab, (5,0), flag=wx.EXPAND)
@@ -44,6 +45,7 @@ class BottomWidgets:	# Add extra widgets to the bottom of the screen
 #    sl.Bind(wx.EVT_SCROLL, self.OnPreamp)
 #  def OnPreamp(self, event):
 #    print event.GetPosition()
+    self.num_rows_added = 1
   def OnAntTuner(self, event):
     btn = event.GetEventObject()
     text = btn.GetLabel()
