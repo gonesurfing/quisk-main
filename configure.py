@@ -465,7 +465,7 @@ class ComboCtrl(wx.combo.ComboCtrl):
       if wm < w:
         wm = w
     wm += charx * 5
-    self.SetSizeHints(wm, self.height, 999, self.height)
+    self.SetSizeHints(wm, self.height, 9999, self.height)
   def SetSelection(self, n):
     try:
       text = self.choices[n]

@@ -459,7 +459,7 @@ static int tx_filter_digital(complex double * filtered, int count, double volume
 #endif
 	if (!filtered) {		// initialization
 		quisk_filt_dInit(&filter1, quiskMic5Filt48Coefs, sizeof(quiskMic5Filt48Coefs)/sizeof(double));
-		quisk_filt_tune(&filter1, 2650.0 / 48000, rxMode != 8);
+		quisk_filt_tune(&filter1, 2650.0 / 48000, rxMode != 8 && rxMode != 2);
 		return 0;
 	}
 #if DEBUG_IO

@@ -1,3 +1,7 @@
+Quisk Version 4.0.1  November 2015
+==================================
+This is mostly a bugfix release.  It also adds the "Odyssey" radio by David Fainitski.
+
 Quisk Version 4.0.0  November 2015
 ==================================
 This is a major new release of Quisk.  Comments, suggestions and bug reports are welcome.

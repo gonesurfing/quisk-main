@@ -170,7 +170,7 @@ class Hardware(BaseHardware):
       try:
         self.tx_level = self.conf.tx_level[self.band]
       except KeyError:
-        self.tx_level = self.conf.tx_level[None]	# The default
+        self.tx_level = self.conf.tx_level.get(None, 127)	# The default
       if self.mode[0:3] in ('DGT', 'FDV'):			# Digital modes; change power by a percentage
         reduc = self.application.digital_tx_level
       else:

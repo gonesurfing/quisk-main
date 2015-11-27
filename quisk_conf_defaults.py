@@ -121,6 +121,11 @@ rx_max_amplitude_correct = 0.2
 # No correction is 0.00.  This controls the range of the control in degrees.
 rx_max_phase_correct = 10.0
 
+## mic_out_volume		Tx audio level, number
+# The level of the Tx audio sent to the sound card after all processing as a fraction 0.0 to 0.7.
+# The level is limited to 0.7 to allow headroom for amplitude and phase adjustments.
+mic_out_volume = 0.7
+
 # The bandAmplPhase dictionary gives the amplitude and phase corrections for
 # sound card data.  The format is a dictionary with key "band", giving a dictionary
 # with key "rx" or "tx", giving a list of tuples (VFO, tune, amplitude, phase).  
@@ -158,6 +163,11 @@ rx_max_amplitude_correct = 0.2
 # entered using the controls from the "Rx Phase" button on the config screen.
 # No correction is 0.00.  This controls the range of the control in degrees.
 rx_max_phase_correct = 10.0
+
+## mic_out_volume		Tx audio level, number
+# The level of the Tx audio sent to the sound card after all processing as a fraction 0.0 to 0.7.
+# The level is limited to 0.7 to allow headroom for amplitude and phase adjustments.
+mic_out_volume = 0.7
 
 # The bandAmplPhase dictionary gives the amplitude and phase corrections for
 # sound card data.  The format is a dictionary with key "band", giving a dictionary
@@ -234,8 +244,6 @@ rx_udp_ip_netmask = '255.255.255.0'
 ## rx_udp_clock				Clock frequency Hertz, integer
 # This is the clock frequency of the hardware in Hertz.
 rx_udp_clock = 122880000
-#rx_udp_clock = 122880000 + 381
-#rx_udp_clock = 122880000 - 1852
 
 ## sndp_active				Enable setting IP, boolean
 # If possible, set the IP address to the address entered.
@@ -285,6 +293,7 @@ sndp_active = True
 #rx_udp_clock = 73728000
 #rx_udp_clock = 61440000
 #rx_udp_clock = 79872000
+#rx_udp_clock = 80000000
 
 ## tx_level		Tx Level, dict
 # tx_level sets the transmit level 0 to 255 for each band.  The None band is the default.
@@ -395,42 +404,102 @@ hermes_board_id = -1
 
 
 
-###  ################ Receivers Odysey,   The Odysey project using a UDP protocol similar to the HiQSDR
-# ## hardware_file_name		Hardware file name, rfile
-# #hardware_file_name = 'hiqsdr/quisk_hardware.py'
+################ Receivers Odyssey,   The Odyssey project using a UDP protocol similar to the HiQSDR
+## hardware_file_name		Hardware file name, rfile
+#hardware_file_name = 'hiqsdr/quisk_hardware.py'
 
-# ## widgets_file_name			Widget file name, rfile
-# #widgets_file_name = ''
+## widgets_file_name			Widget file name, rfile
+#widgets_file_name = ''
 
-# ## use_rx_udp			Hardware type, integer choice
-# # This is the type of UDP hardware.  Use 2 for the HiQSDR protocol.
-# #use_rx_udp = 2
+## use_rx_udp			Hardware type, integer choice
+# This is the type of UDP hardware.  The Odyssey uses type 2.
+#use_rx_udp = 2
 
-#
+## tx_level		Tx Level, dict
+# tx_level sets the transmit level 0 to 255 for each band.  The None band is the default.
+# The config screen has a slider 0 to 100% so you can reduce the transmit power.  The sliders
+# only appear if your hardware defines the method SetTxLevel().  The hardware only supports a
+# power adjustment range of 20 dB, so zero is still a small amount of power.
+tx_level = {
+	None:120, '60':110}
+
+## digital_tx_level			Digital Tx power %, integer
+# Digital modes reduce power by the percentage on the config screen.
+# This is the maximum value of the slider.
+digital_tx_level = 20
+
+## HiQSDR_BandDict		IO Bus, dict
+# This sets the preselect (4 bits) on the X1 connector.
+HiQSDR_BandDict = {
+	'160':1, '80':2, '40':3, '30':4, '20':5, '15':6, '17':7,
+	'12':8, '10':9, '6':10, '500k':11, '137k':12 }
+
+## cw_delay                 CW Delay, integer
+# This is the delay for CW from 0 to 255.
+cw_delay = 0
+
+## rx_udp_ip				IP address, text
+# This is the IP address of your hardware.
+# For FPGA firmware version 1.4 and newer, and if enabled, the hardware is set to the IP address you enter here.
+# For older firmware, the IP address is programmed into the FPGA, and you must enter that address.
+rx_udp_ip = "192.168.2.160"
+#rx_udp_ip = "192.168.1.196"
+
+## rx_udp_port				Hardware UDP port, integer
+# This is the UDP port number of your hardware.
+rx_udp_port = 48247
+
+## rx_udp_ip_netmask		Network netmask, text
+# This is the netmask for the network.
+rx_udp_ip_netmask = '255.255.255.0'
+
+## rx_udp_clock				Clock frequency Hertz, integer
+# This is the clock frequency of the hardware in Hertz.
+rx_udp_clock = 122880000
+
+## sndp_active				Enable setting IP, boolean
+# If possible, set the IP address to the address entered.
+# For FPGA firmware version 1.4 and newer, the hardware is set to the IP address you enter here.
+# For older firmware, the IP address is programmed into the FPGA, and you must enter that address.
+sndp_active = True
+#sndp_active = False
+
+## radio_sound_ip			IP sound play, text
 # This option sends radio playback sound to a UDP device.  Some SDR hardware devices have an
 # audio codec that can play radio sound with less latency than a soundcard.  The sample rate
 # is the same as the soundcard sample rate, but probably you will want 48000 sps.  The UDP
 # data consists of two bytes of zero, followed by the specified number of samples.  Each
 # sample consists of two bytes (a short) of I data and two bytes of Q data in little-endian order.
 # For radio_sound_nsamples = 360, the total number of UDP data bytes is 1442.
-#radio_sound_ip = "192.168.1.201"		# IP address of play device
-#radio_sound_port = 0x1234				# port number for audio
-#radio_sound_nsamples = 360				# number of samples for each block; maximum 367
-#name_of_sound_play = ''				# do not send audio to a soundcard (optional)
-#playback_rate = 48000					# set the rate as required by the hardware
-#
+#radio_sound_ip = "192.168.2.160"
+
+## radio_sound_port			UDP port play, integer
+# The UDP port of the radio sound play device.
+#radio_sound_port = 48250
+
+## radio_sound_nsamples		Num play samples, integer
+# The number of play samples per UDP block.
+#radio_sound_nsamples = 360
+
+## radio_sound_mic_ip		IP microphone, text
 # This option receives microphone samples from a UDP device.  The UDP
 # data consists of two bytes of zero, followed by the specified number of samples.  Each
 # sample consists of two bytes (a short) of monophonic microphone data in little-endian order.
 # For radio_sound_mic_nsamples = 720, the total number of UDP data bytes is 1442.
-#radio_sound_mic_ip = "192.168.1.201"		# IP address of mic device
-#radio_sound_mic_port = 0x1234				# port number for audio
-#radio_sound_mic_nsamples = 720				# number of samples for each block; maximum 734
-#radio_sound_mic_boost = 0					# Mic boost control: 0 == no boost, else 1 for boost
-#microphone_name = ""						# Do not capture the mic from a soundcard
-#mic_sample_rate = 48000					# Microphone capture sample rate in Hertz, must be 48000
+#radio_sound_mic_ip = "192.168.2.160"
 
+## radio_sound_mic_port		UDP port mic, integer
+# The UDP port of the microphone device.
+#radio_sound_mic_port = 48251
 
+## radio_sound_mic_nsamples		Num mic samples, integer
+# The number of mic samples per UDP block.
+#radio_sound_mic_nsamples = 720
+
+## radio_sound_mic_boost	Mic boost, boolean
+# Use False for no microphone boost, or True for +20 dB boost.
+#radio_sound_mic_boost = False
+#radio_sound_mic_boost = True
 
 
 ################ Sound Devices.  Quisk recognizes seven sound capture and playback devices.
@@ -605,10 +674,6 @@ mic_play_chan_I = 0
 # Soundcard index of Tx audio Q play channel
 mic_play_chan_Q = 1
 #mic_play_chan_Q = 0
-
-## mic_out_volume		Mic out level, number
-# Microphone output volume (after all processing) as a fraction 0.0 to 0.7
-mic_out_volume = 0.7
 
 ## lin_digital_input_name		Digital input name, text
 # Input audio from an external program for use with digital modes.  The input must be

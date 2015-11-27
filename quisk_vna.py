@@ -18,12 +18,13 @@ os.chdir(os.path.normpath(os.path.dirname(__file__)))
 if sys.path[0] != "'.'":		# Make sure the current working directory is on path
   sys.path.insert(0, '.')
 
-import wx, wx.html, wx.lib.buttons, wx.lib.stattext, wx.lib.colourdb
-import math, cmath, time, traceback
+import wx, wx.html, wx.lib.buttons, wx.lib.stattext, wx.lib.colourdb, wx.grid, wx.richtext
+import math, cmath, time, traceback, string
 import threading, webbrowser
 import _quisk as QS
 from types import *
 from quisk_widgets import *
+import configure
 
 DEBUG = 0
 
@@ -32,8 +33,48 @@ from optparse import OptionParser
 parser = OptionParser()
 parser.add_option('-c', '--config', dest='config_file_path',
 		help='Specify the configuration file path')
+parser.add_option('', '--config2', dest='config_file_path2', default='',
+		help='Specify a second configuration file to read after the first')
+parser.add_option('-a', '--ask', action="store_true", dest='AskMe', default=False,
+		help='Ask which radio to use when starting')
 argv_options = parser.parse_args()[0]
 ConfigPath = argv_options.config_file_path	# Get config file path
+ConfigPath2 = argv_options.config_file_path2
+if sys.platform == 'win32':
+  path = os.getenv('HOMEDRIVE', '') + os.getenv('HOMEPATH', '')
+  for dir in ("Documents", "My Documents", "Eigene Dateien", "Documenti", "Mine Dokumenter"):
+    config_dir = os.path.join(path, dir)
+    if os.path.isdir(config_dir):
+      break
+  else:
+    config_dir = os.path.join(path, "My Documents")
+  try:
+    import _winreg
+    key = _winreg.OpenKey(_winreg.HKEY_CURRENT_USER,
+       r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders")
+    val = _winreg.QueryValueEx(key, "Personal")
+    val = _winreg.ExpandEnvironmentStrings(val[0])
+    _winreg.CloseKey(key)
+    if os.path.isdir(val):
+      DefaultConfigDir = val
+    else:
+      DefaultConfigDir = config_dir
+  except:
+    traceback.print_exc()
+    DefaultConfigDir = config_dir
+  if not ConfigPath:
+    ConfigPath = os.path.join(DefaultConfigDir, "quisk_conf.py")
+    if not os.path.isfile(ConfigPath):
+      path = os.path.join(config_dir, "quisk_conf.py")
+      if os.path.isfile(path):
+        ConfigPath = path
+  del config_dir
+else:
+  DefaultConfigDir = os.path.expanduser('~')
+  if not ConfigPath:
+    ConfigPath = os.path.join(DefaultConfigDir, ".quisk_conf.py")
+
+
 if not ConfigPath:	# Use default path
   if sys.platform == 'win32':
     path = os.getenv('HOMEDRIVE', '') + os.getenv('HOMEPATH', '')
@@ -692,26 +733,59 @@ class App(wx.App):
     global conf		# conf is the module for all configuration data
     import quisk_conf_defaults as conf
     setattr(conf, 'config_file_path', ConfigPath)
+    setattr(conf, 'DefaultConfigDir', DefaultConfigDir)
     if os.path.isfile(ConfigPath):	# See if the user has a config file
       setattr(conf, 'config_file_exists', True)
       d = {}
       d.update(conf.__dict__)		# make items from conf available
       exec(compile(open(ConfigPath).read(), ConfigPath, 'exec'), d)		# execute the user's config file
+      if os.path.isfile(ConfigPath2):	# See if the user has a second config file
+        exec(compile(open(ConfigPath2).read(), ConfigPath2, 'exec'), d)	# execute the user's second config file
       for k, v in d.items():		# add user's config items to conf
         if k[0] != '_':				# omit items starting with '_'
           setattr(conf, k, v)
     else:
       setattr(conf, 'config_file_exists', False)
+    # Read in configuration from the selected radio
+    if configure: self.local_conf = configure.Configuration(self, argv_options.AskMe)
+    if configure: self.local_conf.UpdateConf()
+    # Choose whether to use Unicode or text symbols
+    for k in ('sym_stat_mem', 'sym_stat_fav', 'sym_stat_dx',
+        'btn_text_range_dn', 'btn_text_range_up', 'btn_text_play', 'btn_text_rec', 'btn_text_file_rec', 
+		'btn_text_file_play', 'btn_text_fav_add',
+        'btn_text_fav_recall', 'btn_text_mem_add', 'btn_text_mem_next', 'btn_text_mem_del'):
+      if conf.use_unicode_symbols:
+        setattr(conf, 'X' + k, getattr(conf, 'U' + k))
+      else:
+        setattr(conf, 'X' + k, getattr(conf, 'T' + k))
+    MakeWidgetGlobals()
     self.graph_freq = 7e6
     self.graph_index = 50
     # Open hardware file
     self.firmware_version = None
     global Hardware
-    if hasattr(conf, "Hardware"):	# Hardware defined in config file
-      Hardware = conf.Hardware(self, conf)
+    if configure and self.local_conf.GetHardware():
+      pass
     else:
-      Hardware = conf.quisk_hardware.Hardware(self, conf)
+      if hasattr(conf, "Hardware"):	# Hardware defined in config file
+        self.Hardware = conf.Hardware(self, conf)
+        hname =  ConfigPath
+      else:
+        self.Hardware = conf.quisk_hardware.Hardware(self, conf)
+        hname =  conf.quisk_hardware.__file__
+      if hname[-3:] == 'pyc':
+        hname = hname[0:-1]
+      setattr(conf, 'hardware_file_name',  hname)
+      if conf.quisk_widgets:
+        hname =  conf.quisk_widgets.__file__
+        if hname[-3:] == 'pyc':
+          hname = hname[0:-1]
+        setattr(conf, 'widgets_file_name',  hname)
+      else:
+        setattr(conf, 'widgets_file_name',  '')
+    Hardware = self.Hardware
     # Initialization
+    if configure: self.local_conf.Initialize()
     # get the screen size
     x, y, self.screen_width, self.screen_height = wx.Display().GetGeometry()
     self.Bind(wx.EVT_QUERY_END_SESSION, self.OnEndSession)
@@ -871,6 +945,21 @@ class App(wx.App):
       szr1.Add(x, 0, wx.RIGHT, gap)
     # Set top window size
     self.main_frame.SetClientSizeWH(self.graph.width, self.screen_height * 5 / 10)
+    if hasattr(Hardware, 'pre_open'):       # pre_open() is called before open()
+      Hardware.pre_open()
+    if conf.use_rx_udp == 10:		# Hermes UDP protocol
+      self.add_version = False
+      conf.tx_ip = Hardware.hermes_ip
+      conf.tx_audio_port = conf.rx_udp_port
+    elif conf.use_rx_udp:
+      self.add_version = True		# Add firmware version to config text
+      conf.rx_udp_decimation = 8 * 8 * 8
+      if not conf.tx_ip:
+        conf.tx_ip = conf.rx_udp_ip
+      if not conf.tx_audio_port:
+        conf.tx_audio_port = conf.rx_udp_port + 2
+    else:
+      self.add_version = False
     # Open the hardware.  This must be called before open_sound().
     self.config_text = Hardware.open()
     if not self.config_text:
