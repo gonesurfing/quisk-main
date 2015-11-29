@@ -479,9 +479,6 @@ int quisk_read_pulseaudio(struct sound_dev *dev, complex double *cSamples) {
     
     if (!dev)
         return 0;
-    
-    if (dev->cork_status)
-        return 0;
 
     if (dev->cork_status) {
         if (dev->read_frames != 0) {
