@@ -4,3 +4,4 @@ build/*
 *.pyc
 *~
 usb/*.pyc
+*.pyc
