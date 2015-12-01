@@ -784,6 +784,8 @@ latency_millisecs = 150
 show_pulse_audio_devices = True
 #show_pulse_audio_devices = False
 
+#Verbose output for PulseAudio to terminal. This allows for debugging of both devices and performnace.
+pulse_audio_verbose_output = False
 
 
 ################ Options

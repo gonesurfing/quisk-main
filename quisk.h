@@ -114,6 +114,7 @@ struct sound_conf {
 	int mic_channel_Q;
 	double mic_out_volume;
 	char IQ_server[IP_SIZE];	//IP address of optional streaming IQ server (pulseaudio)
+    int verbose_pulse;      //verbose output for pulse audio
 } ;
 
 enum quisk_rec_state {

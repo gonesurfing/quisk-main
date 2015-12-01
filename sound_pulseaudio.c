@@ -39,13 +39,6 @@
 #include "quisk.h"
 #include <pulse/pulseaudio.h>
 
-//compiling with verbose = 1 shows stream connection info.
-//compiling with verbose = 2 shows stream latency on console @ TIME_EVENT_USEC frequency
-int verbose = 0;
-
-//This is for verbose = 2 latency measurements
-#define TIME_EVENT_USEC 100000
-
 // From pulsecore/macro.h
 #define pa_memzero(x,l) (memset((x), 0, (l)))
 #define pa_zero(x) (pa_memzero(&(x), sizeof(x)))
@@ -58,8 +51,6 @@ static pa_threaded_mainloop *pa_ml;
 static pa_mainloop_api *pa_mlapi;
 static pa_context *pa_ctx; 		//local context
 static pa_context *pa_IQ_ctx; 		//remote context for IQ audio
-static pa_time_event *time_event_local;
-static pa_time_event *time_event_IQ;
 volatile int streams_ready = 0;		//This is ++/-- by the mainloop thread
 
 // remember all open devices for easy cleanup on exit
@@ -85,14 +76,14 @@ void stream_state_callback(pa_stream *s, void *userdata) {
             break;
             
         case PA_STREAM_TERMINATED:
-            if (verbose)
+            if (quisk_sound_state.verbose_pulse)
                 printf("stream %s terminated\n", dev->name);
             streams_ready--;
             break;
             
         case PA_STREAM_READY:
             streams_ready++; //increment counter to tell other thread that this stream is ready
-            if (verbose) {
+            if (quisk_sound_state.verbose_pulse) {
                 const pa_buffer_attr *a;
                 printf("Connected to device %s (%u, %ssuspended). ",
                        pa_stream_get_device_name(s), pa_stream_get_device_index(s),
@@ -124,7 +115,7 @@ static void stream_underflow_callback(pa_stream *s, void *userdata) {
     assert(s);
     assert(dev);
     
-    if (verbose)
+    if (quisk_sound_state.verbose_pulse)
         printf("Stream underrun %s\n", dev->name);
     dev->dev_error++;
 }
@@ -134,7 +125,7 @@ static void stream_overflow_callback(pa_stream *s, void *userdata) {
     struct sound_dev *dev = userdata;
     assert(s);
     
-    if (verbose)
+    if (quisk_sound_state.verbose_pulse)
         printf("Stream overrun %s\n", dev->name);
     dev->dev_error++;
 }
@@ -145,7 +136,7 @@ static void stream_started_callback(pa_stream *s, void *userdata) {
     assert(s);
     assert(dev);
     
-    if (verbose)
+    if (quisk_sound_state.verbose_pulse)
         printf("Stream started %s\n", dev->name);
 }
 
@@ -155,12 +146,12 @@ static void stream_corked_callback(pa_stream *s, int success, void *userdata) {
     struct sound_dev *dev = userdata;
     
     if (s) {
-        if (verbose)
+        if (quisk_sound_state.verbose_pulse)
             printf("Stream cork/uncork %s success\n", dev->name);
         pa_threaded_mainloop_signal(pa_ml, 0);
     }
     else {
-        if (verbose)
+        if (quisk_sound_state.verbose_pulse)
             printf("Stream cork/uncork %s Failure!\n", dev->name);
         exit(1);
     }
@@ -200,51 +191,6 @@ static void stream_timing_callback(pa_stream *s, int success, void *userdata) {
 }
 
 
-
-// Show the current latency on the console for debugging purposes
-static void stream_debug_timing_callback(pa_stream *s, int success, void *userdata) {
-    struct sound_dev *dev = userdata;
-    pa_usec_t l;
-    int negative = 0;
-    assert(s);
-
-    if (!success || pa_stream_get_latency(s, &l, &negative) < 0) {
-        printf("pa_stream_get_latency() failed: %s\n", pa_strerror(pa_context_errno(pa_stream_get_context(s))));
-        return;
-    }
-
-    printf("%s Latency:%7.0fus", dev->stream_description, (float)(l)*(negative?-1.0f:1.0f));
-}
-
-//Called on frequency determined by TIME_EVENT_USEC
-static void time_event_callback(pa_mainloop_api *m, pa_time_event *e, const struct timeval *t, void *userdata) {
-    assert(userdata);
-    struct sound_dev **pDevices = userdata; 
-
-    while(*pDevices) {
-        struct sound_dev *dev = *pDevices++;
-        assert(dev);
-        pa_stream *s = dev->handle;
-        
-        if (s && pa_stream_get_state(s) == PA_STREAM_READY) {
-            pa_operation *o;
-            if (!(o = pa_stream_update_timing_info(s, stream_debug_timing_callback, dev)))
-                printf("pa_stream_update_timing_info() failed: %s\n", pa_strerror(pa_context_errno(pa_stream_get_context(s))));
-            else
-                pa_operation_unref(o);
-        }
-    }
-
-    printf("\r");
-    fflush(stdout);
-    
-    if (e == time_event_IQ)
-        pa_context_rttime_restart(pa_IQ_ctx, e, pa_rtclock_now() + TIME_EVENT_USEC);
-    else
-        pa_context_rttime_restart(pa_ctx, e, pa_rtclock_now() + TIME_EVENT_USEC);
-}
-
-
 /* This callback allows us to read in the server side stream information so that we
  * can match stream formats and sizes to what is configured in pulseaudio.
 */
@@ -274,7 +220,7 @@ static void server_info_cb(pa_context *c, const pa_server_info *info, void *user
         else
             dev_name = NULL;			// the device name is "pulse" for the default device
 
-        if (verbose)
+        if (quisk_sound_state.verbose_pulse)
             printf("Opening Device %s ", dev_name);
 
         //Construct sample specification. Use S16LE if availiable. Default to Float32 for others.
@@ -387,7 +333,7 @@ static void stream_drain_complete(pa_stream*s, int success, void *userdata) {
         quit(1);
     }
 
-    if (verbose)
+    if (quisk_sound_state.verbose_pulse)
         printf("Playback stream %s drained.\n", dev->name);
 }
 
@@ -532,7 +478,7 @@ int quisk_read_pulseaudio(struct sound_dev *dev, complex double *cSamples) {
        }
        
        if (nSamples * dev->num_channels * dev->sample_bytes + read_bytes >= SAMP_BUFFER_SIZE) {
-           if (verbose)
+           if (quisk_sound_state.verbose_pulse)
                printf("buffer full on %s\n", dev->name);
            pa_stream_drop(s);		// limit read request to buffer size
            break;
@@ -665,7 +611,7 @@ void quisk_play_pulseaudio(struct sound_dev *dev, int nSamples, complex double *
         if ( writable > 1024*1000 ) //sanity check to prevent pa_xmalloc from crashing on monitor streams
             writable = 1024*1000;
         if (fbuffer_bytes > writable) {
-            if (verbose)
+            if (quisk_sound_state.verbose_pulse)
                 printf("Truncating write by %u bytes\n", fbuffer_bytes - (int)writable);
             fbuffer_bytes = writable;
         }
@@ -673,7 +619,7 @@ void quisk_play_pulseaudio(struct sound_dev *dev, int nSamples, complex double *
         //printf("wrote %d to %s\n", writable, dev->name);
     }
     else {
-        if (verbose)
+        if (quisk_sound_state.verbose_pulse)
             printf("Can't write to stream %s. Dropping %d bytes\n", dev->name, fbuffer_bytes);
     }
     
@@ -773,7 +719,7 @@ void quisk_start_sound_pulseaudio(struct sound_dev **pCapture, struct sound_dev 
     }
 
     if (!RemotePulseDevices[0] && !LocalPulseDevices[0]) {	//no pulseaudio devices to open!
-        if (verbose)
+        if (quisk_sound_state.verbose_pulse)
             printf("No pulseaudio devices to open!\n");
         pa_threaded_mainloop_unlock(pa_ml);
         pa_threaded_mainloop_stop(pa_ml);
@@ -792,27 +738,14 @@ void quisk_start_sound_pulseaudio(struct sound_dev **pCapture, struct sound_dev 
             num_pa_devices++;
     }
 
-    if (verbose)
+    if (quisk_sound_state.verbose_pulse)
         printf("Waiting for %d streams to start\n", num_pa_devices);
     
     while (streams_ready < num_pa_devices); // wait for all the devices to open
 
-    if (verbose)
+    if (quisk_sound_state.verbose_pulse)
         printf("All streams started\n");
 
-    if (pa_IQ_ctx && verbose == 2) {
-        if (!(time_event_IQ = pa_context_rttime_new(pa_IQ_ctx, pa_rtclock_now() + TIME_EVENT_USEC,
-                                                    time_event_callback, RemotePulseDevices)))
-            printf("remote pa_context_rttime_new() failed.");
-    }
-
-    if (pa_ctx && verbose == 2) {
-        if (!(time_event_local = pa_context_rttime_new(pa_ctx, pa_rtclock_now() + TIME_EVENT_USEC,
-                                                       time_event_callback, LocalPulseDevices))) {
-            printf("local pa_context_rttime_new() failed.");
-            exit(1);
-        }
-    }
 }
 
 
@@ -820,7 +753,7 @@ void quisk_start_sound_pulseaudio(struct sound_dev **pCapture, struct sound_dev 
 void quisk_close_sound_pulseaudio() {
     int i = 0;
     
-    if (verbose)
+    if (quisk_sound_state.verbose_pulse)
         printf("Closing Pulseaudio interfaces \n ");
 
     while (OpenPulseDevices[i]) {
@@ -829,17 +762,7 @@ void quisk_close_sound_pulseaudio() {
         i++;
     }
 
-    if (time_event_local) {
-        assert(pa_mlapi);
-        pa_mlapi->time_free(time_event_local);
-    }
-
-    if (time_event_IQ) {
-        assert(pa_mlapi);
-        pa_mlapi->time_free(time_event_IQ);
-    }
-
-    if (verbose)
+    if (quisk_sound_state.verbose_pulse)
         printf("Waiting for %d streams to disconnect\n", streams_ready);
 
     while(streams_ready > 0);
@@ -956,7 +879,7 @@ PyObject * quisk_pa_sound_devices(PyObject * self, PyObject * args)
  
 	// This function connects to the pulse server
 	if (pa_context_connect(pa_names_ctx, NULL, 0, NULL) < 0) {
-	   if (verbose)
+	   if (quisk_sound_state.verbose_pulse)
 	      printf("No local daemon to connect to for show_pulse_audio_devices option\n");
 	   return pylist;
 	}
