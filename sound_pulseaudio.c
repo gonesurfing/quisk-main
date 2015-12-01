@@ -689,7 +689,9 @@ void quisk_start_sound_pulseaudio(struct sound_dev **pCapture, struct sound_dev 
     sort_devices(pCapture, LocalPulseDevices, RemotePulseDevices);
     sort_devices(pPlayback, LocalPulseDevices, RemotePulseDevices);
     
-    if (RemotePulseDevices[0] && LocalPulseDevices[0]) {
+    if (!RemotePulseDevices[0] && !LocalPulseDevices[0]) {
+        if (quisk_sound_state.verbose_pulse)
+            printf("No pulseaudio devices to open!\n");
         return; //nothing to open. No need to start the mainloop.
     }
 
@@ -722,15 +724,6 @@ void quisk_start_sound_pulseaudio(struct sound_dev **pCapture, struct sound_dev 
         pa_context_set_state_callback(pa_ctx, state_cb, LocalPulseDevices);
     }
 
-    if (!RemotePulseDevices[0] && !LocalPulseDevices[0]) {	//no pulseaudio devices to open!
-        if (quisk_sound_state.verbose_pulse)
-            printf("No pulseaudio devices to open!\n");
-        pa_threaded_mainloop_unlock(pa_ml);
-        pa_threaded_mainloop_stop(pa_ml);
-        pa_threaded_mainloop_free(pa_ml);
-        pa_ml=NULL;
-        return;
-    }
 
     pa_threaded_mainloop_unlock(pa_ml);
 
