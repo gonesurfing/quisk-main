@@ -688,6 +688,10 @@ void quisk_start_sound_pulseaudio(struct sound_dev **pCapture, struct sound_dev 
 
     sort_devices(pCapture, LocalPulseDevices, RemotePulseDevices);
     sort_devices(pPlayback, LocalPulseDevices, RemotePulseDevices);
+    
+    if (RemotePulseDevices[0] && LocalPulseDevices[0]) {
+        return; //nothing to open. No need to start the mainloop.
+    }
 
     // Create a mainloop API
     pa_ml = pa_threaded_mainloop_new();
