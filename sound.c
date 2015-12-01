@@ -535,7 +535,7 @@ int quisk_read_sound(void)	// Called from sound thread
    
 	// Play digital if required
 	if (rxMode == 7 || rxMode == 8 || rxMode == 9 || rxMode == 13)
-		play_sound_interface(&DigitalOutput, nSamples, cSamples, 0, digital_output_level);
+		play_sound_interface(&DigitalOutput, nSamples, cSamples, 1, digital_output_level);
    
 	// Perhaps record the speaker audio to a file
 	if ( ! key_state) {
@@ -664,7 +664,7 @@ int quisk_read_sound(void)	// Called from sound thread
 		if (MicPlayback.doAmplPhase)
 			correct_sample (&MicPlayback, cSamples, mic_count);
 		// play mic samples
-		play_sound_interface(&MicPlayback, mic_count, cSamples, 0, 1.0);
+		play_sound_interface(&MicPlayback, mic_count, cSamples, 1, 1.0);
 #if DEBUG_MIC == 2
 		quisk_process_samples(cSamples, mic_count);
 #endif
