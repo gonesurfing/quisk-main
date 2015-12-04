@@ -784,8 +784,6 @@ latency_millisecs = 150
 show_pulse_audio_devices = True
 #show_pulse_audio_devices = False
 
-#Verbose output for PulseAudio to terminal. This allows for debugging of both devices and performnace.
-pulse_audio_verbose_output = False
 
 
 ################ Options
@@ -903,6 +901,11 @@ invertSpectrum = 0      # Do not invert
 ## modulation_index     FM modulation index, number
 # For FM transmit, this is the modulation index.
 modulation_index = 1.67
+
+## pulse_audio_verbose_output		Debug PortAudio, integer choice
+# Use 1 to turn on PulseAudio debug and status messages.  This allows for debugging of both devices and performance.
+pulse_audio_verbose_output = 0
+#pulse_audio_verbose_output = 1
 
 
 

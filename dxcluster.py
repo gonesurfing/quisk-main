@@ -108,10 +108,10 @@ class DxCluster(threading.Thread):
   def telnetConnect(self):    
     self.tn.open(conf.dxClHost, conf.dxClPort, 10)
     self.tn.read_until('login:', 10)
-    self.tn.write(conf.user_call_sign + "\n")
+    self.tn.write(str(conf.user_call_sign) + "\n")		# user_call_sign may be Unicode
     if conf.dxClPassword:
-      self.self.tn.read_until("Password: ")
-      self.tn.write(conf.dxClPassword + "\n")
+      self.tn.read_until("Password: ")
+      self.tn.write(str(conf.dxClPassword) + "\n")
 
   def telnetRead(self):
     message = self.tn.read_until('\n', 60).decode(encoding='utf-8', errors='replace')

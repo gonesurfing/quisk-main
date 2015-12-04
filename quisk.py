@@ -2336,7 +2336,7 @@ class QMainFrame(wx.Frame):
   def SetConfigText(self, text):
     if len(text) > 100:
       text = text[0:80] + '|||' + text[-17:]
-    self.SetTitle(self.title + '   ' + text)
+    self.SetTitle("Radio %s   %s   %s" % (configure.Settings[1], self.title, text))
 
 ## Note: The new amplitude/phase adjustments have ideas provided by Andrew Nilsson, VK6JBL
 class QAdjustPhase(wx.Frame):

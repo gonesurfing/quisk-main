@@ -75,3 +75,4 @@ extern double quiskAudio24p3Coefs[100];
 extern double quiskFiltTx8kAudioB[168];
 extern double quiskFilt16dec8Coefs[62];
 extern double quiskFilt120s03[480];
+extern double quiskFiltI3D25Coefs[825];

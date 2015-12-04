@@ -92,7 +92,7 @@ class Configuration:
         if i1 > 0:
           v = v[0:i1]
       try:
-        if fmt4 in ('text', 'dict', 'list'):
+        if fmt4 in ('text', 'dict', 'list'):	# Note: JSON returns Unicode strings !!!
           setattr(conf, k, v)
         elif fmt4 == 'inte':
           setattr(conf, k, int(v, base=0))

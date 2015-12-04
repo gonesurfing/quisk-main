@@ -1275,6 +1275,7 @@ static int quisk_process_decimate(complex double * cSamples, int nSamples, int b
 		struct quisk_cFilter filtDecim5;
 		struct quisk_cFilter filtDecim5S;
 		struct quisk_cFilter filtDecim48to24;
+		struct quisk_cFilter filtI3D25;
 	} Storage[2] ;
 
 	if ( ! cSamples) {	// Initialize all filters
@@ -1292,6 +1293,7 @@ static int quisk_process_decimate(complex double * cSamples, int nSamples, int b
 			quisk_filt_cInit(&Storage[i].filtDecim5, quiskFilt240D5Coefs, sizeof(quiskFilt240D5Coefs)/sizeof(double));
 			quisk_filt_cInit(&Storage[i].filtDecim5S, quiskFilt240D5CoefsSharp, sizeof(quiskFilt240D5CoefsSharp)/sizeof(double));
 			quisk_filt_cInit(&Storage[i].filtDecim48to24, quiskFilt48dec24Coefs, sizeof(quiskFilt48dec24Coefs)/sizeof(double));
+			quisk_filt_cInit(&Storage[i].filtI3D25, quiskFiltI3D25Coefs, sizeof(quiskFiltI3D25Coefs)/sizeof(double));
 		}
 		return 0;
 	}
@@ -1355,6 +1357,9 @@ static int quisk_process_decimate(complex double * cSamples, int nSamples, int b
 			nSamples = quisk_cDecimate(cSamples, nSamples, &Storage[bank].filtDecim48to24, 2);
 		else
 			nSamples = quisk_cDecim2HB45(cSamples, nSamples, &Storage[bank].HalfBand1);
+		break;
+	case 400:
+		nSamples = quisk_cInterpDecim(cSamples, nSamples, &Storage[bank].filtI3D25, 3, 25);
 		break;
 	case 480:
 		nSamples = quisk_cDecimate(cSamples, nSamples, &Storage[bank].filtDecim5, 5);
@@ -2949,7 +2954,7 @@ static PyObject * open_sound(PyObject * self, PyObject * args)
 	strncpy(quisk_sound_state.name_of_mic_play, mpname, QUISK_SC_SIZE);
 	strncpy(quisk_sound_state.mic_ip, mip, IP_SIZE);
 	strncpy(quisk_sound_state.IQ_server, QuiskGetConfigString("IQ_Server_IP", ""), IP_SIZE);
-    quisk_sound_state.verbose_pulse = QuiskGetConfigInt("pulse_audio_verbose_output", 0);
+	quisk_sound_state.verbose_pulse = QuiskGetConfigInt("pulse_audio_verbose_output", 0);
 	fft_error = 0;
 	quisk_open_sound();
 	quisk_open_mic();
