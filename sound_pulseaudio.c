@@ -54,12 +54,7 @@ static pa_context *pa_IQ_ctx; 		//remote context for IQ audio
 volatile int streams_ready = 0;		//This is ++/-- by the mainloop thread
 
 // remember all open devices for easy cleanup on exit
-static pa_stream* OpenPulseDevices[PA_LIST_SIZE * 2] = {NULL};
-
-//sorted lists of local and remote devices
-static struct sound_dev *LocalPulseDevices[PA_LIST_SIZE] = {NULL};
-static struct sound_dev *RemotePulseDevices[PA_LIST_SIZE] = {NULL};
-
+static pa_stream *OpenPulseDevices[PA_LIST_SIZE * 2] = {NULL};
 
 
 /* This callback happens any time a stream changes state. Here, it's primary used to 
@@ -685,6 +680,9 @@ void sort_devices(struct sound_dev **plist, struct sound_dev **pLocal, struct so
 void quisk_start_sound_pulseaudio(struct sound_dev **pCapture, struct sound_dev **pPlayback) {
     int num_pa_devices = 0;
     int i;
+    //sorted lists of local and remote devices
+    struct sound_dev *LocalPulseDevices[PA_LIST_SIZE] = {NULL};
+    struct sound_dev *RemotePulseDevices[PA_LIST_SIZE] = {NULL};
 
     sort_devices(pCapture, LocalPulseDevices, RemotePulseDevices);
     sort_devices(pPlayback, LocalPulseDevices, RemotePulseDevices);
@@ -742,6 +740,7 @@ void quisk_start_sound_pulseaudio(struct sound_dev **pCapture, struct sound_dev 
 
     if (quisk_sound_state.verbose_pulse)
         printf("All streams started\n");
+    
 
 }
 
@@ -756,8 +755,10 @@ void quisk_close_sound_pulseaudio() {
     while (OpenPulseDevices[i]) {
         pa_stream_disconnect(OpenPulseDevices[i]);
         pa_stream_unref(OpenPulseDevices[i]);
+        OpenPulseDevices[i] = '\0';
         i++;
     }
+    
 
     if (quisk_sound_state.verbose_pulse)
         printf("Waiting for %d streams to disconnect\n", streams_ready);

@@ -769,8 +769,8 @@ class Radios(BaseWindow):	# The "Radios" first-level page
     item = self.AddTextL(1, "Restart Quisk with new settings")
     item = self.AddPushButton(2, "Restart Quisk", 1)
     self.Bind(wx.EVT_BUTTON, self.OnBtnRestart, item)
-    if application.pulse_in_use:
-      item.Enable(False)	# Pulse requires a program exit to clean up
+    #if application.pulse_in_use:
+        #item.Enable(False)	# Pulse requires a program exit to clean up
     self.NextRow()
     self.Fit()
     self.SetupScrolling()
