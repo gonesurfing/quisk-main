@@ -1,3 +1,119 @@
+Quisk Version 4.1.12  December 2017
+===================================
+Sid, G3VBV, updated the documentation file. Thanks Sid! I fixed a network problem with the HiQSDR
+on Windows 10.
+
+There is now an easy way to connect Quisk to an external digital program such as Fldigi or wsjtx by
+using Linux PulseAudio.  Just set the names pulse:QuiskDigitalInput and pulse:QuiskDigitalOutput
+on your radio Sound configuration screen. Quisk will create the necessary loopback devices.  Then
+set your digital program output/input to Quisk input/output.  Press the Help button for
+documentation, and see the docs.html file for details.
+
+Quisk Version 4.1.11  November 2017
+===================================
+I added a fix for the Proficio USB frequency control from Stew, N8VET and Tony, VK4KRC.  Thanks!
+I changed the Config/Radio/Bands/IO Bus screen to a bit field instead of an integer for the Hermes Lite.
+There is a new "Frequency round for SSB" on the radio/options screen.  It rounds the left mouse click
+to 1000 Hertz for voice modes on HF.  This is useful when most voice stations are at a multiple of 1000 Hertz.
+It defaults to zero, so enter 1000 (or other rounding frequency) to turn it on.
+The graph Ys and Yz settings are now saved for each band.
+
+Quisk Version 4.1.10  August 2017
+=================================
+I added Steve's Quisk updates for version 60 of the HL2 firmware.  Thanks Steve!  I fixed a bug in
+the VNA code for HermesLite.  But please note that quisk_vna will NOT work in HermesLite2 until I
+have a working HL2 and I port the VNA firmware to it.  Currently VNA requires a Hermes Lite with
+firwmare version 32.
+
+Quisk Version 4.1.9  August 2017
+================================
+The "Display fraction" is ignored for the Bandscope so the whole spectrum is visible.  I added
+bandscope support for the Odyssey-2 radio.  I changed the HermesLite2 logic to agree with the
+new firmware.  Thanks Steve!  I added logic for the SoftRock to correct for rate differences
+between two sound cards.  Thanks to Nick, G3VNC!
+
+Quisk Version 4.1.8  June 2017
+==============================
+This version adds a bandscope screen for the Hermes Lite.  It uses the raw data
+from the ADC to display a 36 MHz wide view of the spectrum.  You do not need to
+update to this version unless you have Hermes hardware.
+
+Quisk Version 4.1.7  June 2017
+==============================
+This version merges all Hermes Lite 1 and 2 features with the regular Quisk distribution.
+There is no longer a need for a special Hermes Lite version.  If you have a Hermes Lite 2,
+please use the latest firmware with version 40 and up.  The extra data windows and settings for
+HL2 will appear when using HL1, but will be invalid.  I will fix this when everyone updates to
+the latest HL2 firmware.
+
+Robert, DM4RW contributed a bug fix for CW.  Thanks Robert!
+
+Quisk Version 4.1.6  May 2017
+=============================
+This version fixes a bug in the small window format of the Hermes Lite 2 screen.
+Do not use this version unless you have HL2 hardware.
+
+Quisk Version 4.1.5  April 2017
+===============================
+This version adds code for Hermes Lite Version 2 to display temperature and current.
+Do not use this version unless you have HL2 hardware.
+
+Quisk Version 4.1.4  March 2017
+===============================
+This version adds code for Hermes Lite Version 2 that was provided by Steve, KF7O.
+Do not use this version unless you have HL2 hardware.  It will produce error messages if used with HL1.
+
+Quisk Version 4.1.3  December 2016
+==================================
+The VNA program quisk_vna.py now works with either the Hermes hardware or the HiQSDR hardware.  The
+quisk_vna.py program is part of Quisk.  You need Hermes-Lite firmware 32 or above to use VNA.
+
+I added some defaults for the 137k and 500k bands.  These bands are experimental, so be sure
+to set the lower and upper edge on the Config/Radio/Bands screen and follow the rules for your country.
+
+If you set the TX Level for a band to zero, the PTT button is grayed out for that band.  This
+is a visual reminder not to transmit on that band.
+
+Quisk Version 4.1.2  October 2016
+=================================
+This contains a new version of the Quisk Vector Network Analyzer program quisk_vna.py.
+The VNA program works with the Quisk hardware and the HiQSDR.  I replaced the correction
+logic, added a new Calibrate screen and improved the formatting.
+
+I added a feature to change the Quisk waterfall colors on the Fonts configuration screen.
+The new colors were provided by David Fainitski.
+
+Quisk Version 4.1.1  June 2016
+==============================
+Quisk can now display and tune multiple sub-receivers if your hardware has them.  It currently
+works with the Hermes-Lite hardware.  Push the Help button for documentation.  You can tune
+sub-receivers to different bands and modes, and play audio from any of them.
+
+You can select diferent color schemes from the Radio/Font configuration screen.
+
+I added code to speed up the display of configuration pages when the Config button is pushed.
+
+For users of the HiQSDR, I added sample rates of 1536 and 1920 ksps.  These are 16-bit samples,
+and require recent DL2STG firmware.  I changed the VNA program shutdown messages.
+
+Quisk Version 4.0.5  April 2016
+===============================
+I added a new column to the Bands screen for transverter offset.  I added the favorites file path
+to the Options radio screen.  If you leave this blank, the default is used.  I fixed a bug that
+caused a difference in drawing the graph screen between wx 2.8 and wx 3.0.  I added additional
+sample rates 1536 and 1920 ksps.
+
+Quisk Version 4.0.4  February 2016
+==================================
+For radios using UDP (HiQSDR, Hermes, etc.) I added the transmit IP and port number to the
+radio configuration screens in order to support multiple radios on the same network.  Leave
+these blank for normal operation.  I fixed a drawing error that seems to occur on wx 3.0.
+
+Quisk Version 4.0.3  December 2015
+==================================
+This is mostly a bugfix release.  It changes Unicode JSON strings to ASCII.
+It adds additional PulseAudio features provided by Eric Thornton.  Thanks Eric!
+
 Quisk Version 4.0.2  December 2015
 ==================================
 This is mostly a bugfix release.  It fixes problems with the DX cluster telnet server.

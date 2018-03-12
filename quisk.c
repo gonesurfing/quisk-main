@@ -31,15 +31,22 @@ static int cleanupWSA = 0;			// Must we call WSACleanup() ?
 #define FM_FILTER_DEMPH		300.0				// Frequency of FM lowpass de-emphasis filter
 #define AGC_DELAY			15					// Delay in AGC buffer in milliseconds
 #define FFT_ARRAY_SIZE		4					// Number of FFTs
+#define MULTIRX_FFT_MULT	8					// multirx FFT size is a multiple of graph size
+#define MAX_RX_CHANNELS		3					// maximum paths to decode audio
+#define MAX_RX_FILTERS		3					// maximum number of receiver filters
 
 static int fft_error;			// fft error count
 typedef struct fftd {
 	fftw_complex * samples;		// complex data for fft
-	fftw_plan plan;				// fft plan for fftW
 	int index;					// position of next fft sample
 	int filled;					// whether the fft is ready to run
 	int block;					// block number 0, 1, ...
 } fft_data;
+
+typedef struct mrx_fftd {		// FFT data for sub-receivers
+	fftw_complex * samples;		// complex data for fft of size multirx_fft_width
+	int index;					// position of next fft sample
+} mrx_fft_data;
 
 struct AgcState {		// Store state information for the AGC
 	double max_out;		// Must initialize to maximum output level 0.0 to 1.0.
@@ -58,6 +65,7 @@ struct AgcState {		// Store state information for the AGC
 
 static fft_data fft_data_array[FFT_ARRAY_SIZE];		// Data for several FFTs
 static int fft_data_index = 0;						// Write the current samples to this FFT
+static fftw_plan quisk_fft_plan;
 
 static double * fft_window;		// Window for FFT data
 static double * current_graph;	// current graph data as returned
@@ -67,7 +75,8 @@ static PyObject * QuiskError;		// Exception for this module
 static PyObject * pyApp;		// Application instance
 static int fft_size;			// size of fft, e.g. 1024
 int data_width;				// number of points to return as graph data; fft_size * n
-int rxMode;					// 0 to 13: CWL, CWU, LSB, USB, AM, FM, EXT, DGT-U, DGT-L, DGT-IQ, IMD, FDV-U, FDV-L, DGT-FM
+static int graph_width;			// width of the graph in pixels
+int rxMode;				// 0 to 13: CWL, CWU, LSB, USB, AM, FM, EXT, DGT-U, DGT-L, DGT-IQ, IMD, FDV-U, FDV-L, DGT-FM
 int quisk_noise_blanker;		// noise blanker level, 0 for off
 int quiskTxHoldState;			// hold Tx until the repeater frequency shift is complete
 static int quisk_auto_notch;	// auto notch control
@@ -75,18 +84,16 @@ PyObject * quisk_pyConfig=NULL;	// Configuration module instance
 long quisk_mainwin_handle;		// Handle of the main window
 static int graphX;			// Origin of first X value for graph data
 static int graphY;			// Origin of 0 dB for graph data
-static int average_count;		// Number of FFT's to average for graph
 static double graphScale;		// Scale factor for graph
 static complex double testtonePhase;        // Phase increment for test tone
 double quisk_audioVolume;		// Audio output level, 0.0 to 1.0
 double quisk_ctcss_freq;		// CTCSS repeater access tone frequency in Hertz, or zero
-static double cFilterI[MAX_FILTER_SIZE];	// Digital filter coefficients for receive
-static double cFilterQ[MAX_FILTER_SIZE];	// Digital filter coefficients
+static double cFilterI[MAX_RX_FILTERS][MAX_FILTER_SIZE];	// Digital filter coefficients for receivers
+static double cFilterQ[MAX_RX_FILTERS][MAX_FILTER_SIZE];	// Digital filter coefficients
 static int sizeFilter;			// Number of coefficients for filters
 static int isFDX;			// Are we in full duplex mode?
-static int filter_bandwidth;		// Current filter bandwidth in Hertz
+static int filter_bandwidth;		// Current filter bandwidth in Hertz for filter zero
 static int quisk_decim_srate;				// Sample rate after decimation
-static int quisk_demod_srate;				// Sample rate after demodulation
 static int quisk_filter_srate=48000;		// Frequency for filters
 static int split_rxtx;						// Are we in split rx/tx mode?
 static int kill_audio;					// Replace radio sound with silence
@@ -102,6 +109,25 @@ static int multiple_sample_rates=0;     // Hardware supports multiple different 
 static int vfo_screen;                  // The VFO (center) frequency on the FFT screen
 static int vfo_audio;                   // VFO frequency for the audio channel
 static int is_PTT_down;					// state 0/1 of PTT button
+static int sample_bytes=3;				// number of bytes in each I or Q sample
+
+static int multirx_data_width;			// width of graph data to return
+static int multirx_fft_width;			// size of FFT samples
+int quisk_multirx_count;				// number of additional receivers zero or 1, 2, 3, ...
+static int quisk_multirx_state;			// state of hermes receivers
+static mrx_fft_data multirx_fft_data[QUISK_MAX_RECEIVERS];		// FFT data for the sub-receivers
+static int multirx_fft_next_index;								// index of the receiver for the next FFT to return
+static double multirx_fft_next_time;							// timing interval for multirx FFT
+static int multirx_fft_next_state;								// state of multirx FFT: 0 == filling, 1 == ready, 2 == done
+static fftw_plan multirx_fft_next_plan;							// fftw3 plan for multirx FFTs
+static fftw_complex * multirx_fft_next_samples;					// sample buffer for multirx FFT
+static int multirx_play_method;			// 0== both, 1==left, 2==right
+static int multirx_play_channel = -1;	// index of the channel to play; or -1
+static int multirx_freq[QUISK_MAX_RECEIVERS];			// tune frequency for channel
+static int multirx_mode[QUISK_MAX_RECEIVERS];			// mode CW, SSB, etc. for channel
+
+static complex double * multirx_cSamples[QUISK_MAX_RECEIVERS];		// samples for the sub-receivers
+static int multirx_sample_size;					// current size of the sub-receiver sample array
 
 static double sidetoneVolume;		// Audio output level of the CW sidetone, 0.0 to 1.0
 static int keyupDelay;			// Play silence after sidetone ends
@@ -121,7 +147,7 @@ static int rit_freq;			// RIT frequency in Hertz
 
 #define RX_UDP_SIZE		1442		// Expected size of UDP samples packet
 static int rx_udp_socket = INVALID_SOCKET;		// Socket for receiving ADC samples from UDP
-static int rx_udp_started = 0;		// Have we received any data yet?
+int quisk_rx_udp_started = 0;		// Have we received any data yet?
 int quisk_using_udp = 0;			// Are we using rx_udp_socket?  No longer used, but provided for backward compatibility.
 static double rx_udp_gain_correct = 0;		// Small correction for different decimation rates
 static double rx_udp_clock;			// Clock frequency for UDP samples
@@ -129,7 +155,13 @@ int quisk_use_rx_udp;						// from the config file
 
 static int is_little_endian;		// Test byte order; is it little-endian?
 unsigned char quisk_pc_to_hermes[17 * 4];			// data to send from PC to Hermes hardware
+unsigned char quisk_hermeslite_writequeue[4 * 5]; // One-time writes to Hermes-Lite
+unsigned int quisk_hermeslite_writepointer = 0;
+unsigned int quisk_hermeslite_writeattempts = 0;
+unsigned int quisk_hermes_code_version = 0;
 static unsigned char quisk_hermes_to_pc[5 * 4];		// data received from the Hermes hardware
+static int hermes_code_version = -1;		// code version returned by the Hermes hardware
+static int hermes_board_id = -1;		// board ID returned by the Hermes hardware
 
 enum quisk_rec_state quisk_record_state = IDLE;
 static float * quisk_record_buffer;
@@ -156,6 +188,17 @@ static int wavEnd;				// End of sound data
 static FILE * wavFp;			// File pointer for WAV file input
 static int wavPosSound;			// Current position for radio sound
 static int wavPosMic;			// Current position for microphone
+
+// These are used for bandscope data from Hermes
+static fftw_plan bandscopePlan=NULL;
+static int bandscopeState = 0;
+static int bandscopeBlockCount = 4;
+static int bandscope_size = 2048;
+static double * bandscopeSamples = NULL;
+static double * bandscopeWindow = NULL;
+static double * bandscopeAverage = NULL;
+static complex double * bandscopeFFT = NULL;
+static double hermes_adc_level = 50.0;
 
 #if SAMPLES_FROM_FILE
 static struct QuiskWav hWav;
@@ -906,21 +949,23 @@ static PyObject * get_audio_graph(PyObject * self, PyObject * args)
 }
 #endif
 
-static complex double dRxFilterOut(complex double sample, int bank)
-{  // Rx FIR filter; bank is the static storage index, and must be different for different data streams
+static complex double dRxFilterOut(complex double sample, int bank, int nFilter)
+{	// Rx FIR filter; bank is the static storage index, and must be different for different data streams.
+	// Multiple filters are at nFilter.
 	complex double cx;
 	int j, k;
 	static int init = 0;
 	static struct stStorage {
 		int indexFilter;						// current index into sample buffer
 		complex double bufFilterC[MAX_FILTER_SIZE];	// Digital filter sample buffer
-	} Storage[2];
+	} Storage[MAX_RX_CHANNELS];
 	struct stStorage * ptBuf = Storage + bank;
+	double * filtI;
 
 	if ( ! init) {
 		init = 1;
-		memset(Storage, 0, sizeof(struct stStorage));
-		memset(Storage + 1, 0, sizeof(struct stStorage));
+		for (j = 0; j < MAX_RX_CHANNELS; j++)
+			memset(Storage + j, 0, sizeof(struct stStorage));
 	}
 
 	if ( ! sizeFilter)
@@ -929,9 +974,10 @@ static complex double dRxFilterOut(complex double sample, int bank)
 		ptBuf->indexFilter = 0;
 	ptBuf->bufFilterC[ptBuf->indexFilter] = sample;
 	cx = 0;
+	filtI = cFilterI[nFilter];
 	j = ptBuf->indexFilter;
 	for (k = 0; k < sizeFilter; k++) {
-		cx += ptBuf->bufFilterC[j] * cFilterI[k];
+		cx += ptBuf->bufFilterC[j] * filtI[k];
 		if (++j >= sizeFilter)
 			j = 0;
 	}
@@ -939,22 +985,24 @@ static complex double dRxFilterOut(complex double sample, int bank)
 	return cx;
 }
 
-complex double cRxFilterOut(complex double sample, int bank)
-{  // Rx FIR filter; bank is the static storage index, and must be different for different data streams
+complex double cRxFilterOut(complex double sample, int bank, int nFilter)
+{	// Rx FIR filter; bank is the static storage index, and must be different for different data streams.
+	// Multiple filters are at nFilter.
 	double accI, accQ;
+	double * filtI, * filtQ;
 	int j, k;
 	static int init = 0;
 	static struct stStorage {
 		int indexFilter;						// current index into sample buffer
 		double bufFilterI[MAX_FILTER_SIZE];		// Digital filter sample buffer
 		double bufFilterQ[MAX_FILTER_SIZE];		// Digital filter sample buffer
-	} Storage[2];
+	} Storage[MAX_RX_CHANNELS];
 	struct stStorage * ptBuf = Storage + bank;
 
 	if ( ! init) {
 		init = 1;
-		memset(Storage, 0, sizeof(struct stStorage));
-		memset(Storage + 1, 0, sizeof(struct stStorage));
+		for (j = 0; j < MAX_RX_CHANNELS; j++)
+			memset(Storage + j, 0, sizeof(struct stStorage));
 	}
 
 	if ( ! sizeFilter)
@@ -963,11 +1011,13 @@ complex double cRxFilterOut(complex double sample, int bank)
 		ptBuf->indexFilter = 0;
 	ptBuf->bufFilterI[ptBuf->indexFilter] = creal(sample);
 	ptBuf->bufFilterQ[ptBuf->indexFilter] = cimag(sample);
+	filtI = cFilterI[nFilter];
+	filtQ = cFilterQ[nFilter];
 	accI = accQ = 0;
 	j = ptBuf->indexFilter;
 	for (k = 0; k < sizeFilter; k++) {
-		accI += ptBuf->bufFilterI[j] * cFilterI[k];
-		accQ += ptBuf->bufFilterQ[j] * cFilterQ[k];
+		accI += ptBuf->bufFilterI[j] * filtI[k];
+		accQ += ptBuf->bufFilterQ[j] * filtQ[k];
 		if (++j >= sizeFilter)
 			j = 0;
 	}
@@ -1258,7 +1308,7 @@ void quisk_file_microphone(complex double * cSamples, int nSamples)
 	}
 }
 
-static int quisk_process_decimate(complex double * cSamples, int nSamples, int bank)
+static int quisk_process_decimate(complex double * cSamples, int nSamples, int bank, int rx_mode)
 {	// Changes here will require changes to get_filter_rate();
 	int i, final_filter;
 	static struct stStorage {
@@ -1266,6 +1316,7 @@ static int quisk_process_decimate(complex double * cSamples, int nSamples, int b
 		struct quisk_cHB45Filter HalfBand2;
 		struct quisk_cHB45Filter HalfBand3;
 		struct quisk_cHB45Filter HalfBand4;
+		struct quisk_cHB45Filter HalfBand5;
 		struct quisk_cFilter filtSdriq111;
 		struct quisk_cFilter filtSdriq53;
 		struct quisk_cFilter filtSdriq133;
@@ -1276,14 +1327,15 @@ static int quisk_process_decimate(complex double * cSamples, int nSamples, int b
 		struct quisk_cFilter filtDecim5S;
 		struct quisk_cFilter filtDecim48to24;
 		struct quisk_cFilter filtI3D25;
-	} Storage[2] ;
+	} Storage[MAX_RX_CHANNELS] ;
 
 	if ( ! cSamples) {	// Initialize all filters
-		for (i = 0; i < 2; i++) {
+		for (i = 0; i < MAX_RX_CHANNELS; i++) {
 			memset(&Storage[i].HalfBand1, 0, sizeof(struct quisk_cHB45Filter));
 			memset(&Storage[i].HalfBand2, 0, sizeof(struct quisk_cHB45Filter));
 			memset(&Storage[i].HalfBand3, 0, sizeof(struct quisk_cHB45Filter));
 			memset(&Storage[i].HalfBand4, 0, sizeof(struct quisk_cHB45Filter));
+			memset(&Storage[i].HalfBand5, 0, sizeof(struct quisk_cHB45Filter));
 			quisk_filt_cInit(&Storage[i].filtSdriq111, quiskFilt111D2Coefs, sizeof(quiskFilt111D2Coefs)/sizeof(double));
 			quisk_filt_cInit(&Storage[i].filtSdriq53, quiskFilt53D1Coefs, sizeof(quiskFilt53D1Coefs)/sizeof(double));
 			quisk_filt_cInit(&Storage[i].filtSdriq133, quiskFilt133D2Coefs, sizeof(quiskFilt133D2Coefs)/sizeof(double));
@@ -1300,7 +1352,7 @@ static int quisk_process_decimate(complex double * cSamples, int nSamples, int b
 	// Decimate: Lower the sample rate to 48000 sps (or approx).  Filters are designed for
 	// a pass bandwidth of 20 kHz and a stop bandwidth of 24 kHz.
 	// We use 48 ksps to accommodate wide digital modes.
-	final_filter = (rxMode == 7 || rxMode == 8 || rxMode == 9);	// Use sharp FIR final filter for decimate
+	final_filter = (rx_mode == 7 || rx_mode == 8 || rx_mode == 9);	// Use sharp FIR final filter for decimate
 	quisk_decim_srate = 48000;
 	switch((quisk_sound_state.sample_rate + 100) / 1000) {
 	case 41:
@@ -1404,6 +1456,22 @@ static int quisk_process_decimate(complex double * cSamples, int nSamples, int b
 		nSamples = quisk_cDecim2HB45(cSamples, nSamples, &Storage[bank].HalfBand3);
 		nSamples = quisk_cDecimate(cSamples, nSamples, &Storage[bank].filtSdriq167, 3);
 		break;
+	case 1536:
+		nSamples = quisk_cDecim2HB45(cSamples, nSamples, &Storage[bank].HalfBand2);
+		nSamples = quisk_cDecim2HB45(cSamples, nSamples, &Storage[bank].HalfBand3);
+		nSamples = quisk_cDecim2HB45(cSamples, nSamples, &Storage[bank].HalfBand4);
+		nSamples = quisk_cDecim2HB45(cSamples, nSamples, &Storage[bank].HalfBand5);
+		if (final_filter)
+			nSamples = quisk_cDecimate(cSamples, nSamples, &Storage[bank].filtDecim48to24, 2);
+		else
+			nSamples = quisk_cDecim2HB45(cSamples, nSamples, &Storage[bank].HalfBand1);
+		break;
+	case 1920:
+		nSamples = quisk_cDecim2HB45(cSamples, nSamples, &Storage[bank].HalfBand1);
+		nSamples = quisk_cDecim2HB45(cSamples, nSamples, &Storage[bank].HalfBand2);
+		nSamples = quisk_cDecim2HB45(cSamples, nSamples, &Storage[bank].HalfBand3);
+		nSamples = quisk_cDecimate(cSamples, nSamples, &Storage[bank].filtDecim5, 5);
+		break;
     case 2304:
 		nSamples = quisk_cDecim2HB45(cSamples, nSamples, &Storage[bank].HalfBand1);
 		nSamples = quisk_cDecim2HB45(cSamples, nSamples, &Storage[bank].HalfBand2);
@@ -1418,7 +1486,7 @@ static int quisk_process_decimate(complex double * cSamples, int nSamples, int b
 	return nSamples;
 }
 
-static int quisk_process_demodulate(complex double * cSamples, double * dsamples, int nSamples, int bank)
+static int quisk_process_demodulate(complex double * cSamples, double * dsamples, int nSamples, int bank, int nFilter, int rx_mode)
 {	// Changes here will require changes to get_filter_rate();
 	int i;
 	complex double cx, cpx;
@@ -1432,6 +1500,7 @@ static int quisk_process_demodulate(complex double * cSamples, double * dsamples
 		struct quisk_cHB45Filter HalfBand4;
 		struct quisk_cHB45Filter HalfBand5;
 		struct quisk_dHB45Filter HalfBand6;
+		struct quisk_dHB45Filter HalfBand7;
 		struct quisk_dFilter filtAudio24p3;
 		struct quisk_dFilter filtAudio24p4;
 		struct quisk_dFilter filtAudio12p2;
@@ -1440,13 +1509,14 @@ static int quisk_process_demodulate(complex double * cSamples, double * dsamples
 		struct quisk_cFilter filtDecim16to8;
 		struct quisk_cFilter filtDecim48to24;
 		struct quisk_cFilter filtDecim48to16;
-	} Storage[2] ;
+	} Storage[MAX_RX_CHANNELS] ;
 
 	if ( ! cSamples) {	// Initialize all filters
-		for (i = 0; i < 2; i++) {
+		for (i = 0; i < MAX_RX_CHANNELS; i++) {
 			memset(&Storage[i].HalfBand4, 0, sizeof(struct quisk_cHB45Filter));
 			memset(&Storage[i].HalfBand5, 0, sizeof(struct quisk_cHB45Filter));
 			memset(&Storage[i].HalfBand6, 0, sizeof(struct quisk_dHB45Filter));
+			memset(&Storage[i].HalfBand7, 0, sizeof(struct quisk_dHB45Filter));
 			quisk_filt_dInit(&Storage[i].filtAudio24p3, quiskAudio24p3Coefs, sizeof(quiskAudio24p3Coefs)/sizeof(double));
 			quisk_filt_dInit(&Storage[i].filtAudio24p4, quiskAudio24p4Coefs, sizeof(quiskAudio24p4Coefs)/sizeof(double));
 			quisk_filt_dInit(&Storage[i].filtAudio12p2, quiskAudio24p4Coefs, sizeof(quiskAudio24p4Coefs)/sizeof(double));
@@ -1468,184 +1538,197 @@ static int quisk_process_demodulate(complex double * cSamples, double * dsamples
 
 	// Filter and demodulate signal, copy capture buffer cSamples to play buffer dsamples.
 	// quisk_decim_srate is the sample rate after integer decimation.
-    quisk_demod_srate = quisk_decim_srate;
-	switch(rxMode) {
+	switch(rx_mode) {
 	case 0:		// lower sideband CW at 6 ksps
-		quisk_demod_srate /= 8;
-		quisk_filter_srate = quisk_demod_srate;
+		quisk_filter_srate = quisk_decim_srate / 8;
 		nSamples = quisk_cDecim2HB45(cSamples, nSamples, &Storage[bank].HalfBand5);
 		nSamples = quisk_cDecim2HB45(cSamples, nSamples, &Storage[bank].HalfBand4);
 		nSamples = quisk_cDecimate(cSamples, nSamples, &Storage[bank].filtDecim48to24, 2);
 		for (i = 0; i < nSamples; i++) {
-			cx = cRxFilterOut(cSamples[i], bank);
+			cx = cRxFilterOut(cSamples[i], bank, nFilter);
 			dsamples[i] = dd = creal(cx) + cimag(cx);
-			measure_audio_sum += dd * dd;
-			measure_audio_count += 1;
+			if(bank == 0) {
+				measure_audio_sum += dd * dd;
+				measure_audio_count += 1;
+			}
 		}
 		if(bank == 0)
 			dAutoNotch(dsamples, nSamples, rit_freq, quisk_filter_srate);
 		nSamples = quisk_dInterpolate(dsamples, nSamples, &Storage[bank].filtAudio12p2, 2);
 		nSamples = quisk_dInterp2HB45(dsamples, nSamples, &Storage[bank].HalfBand6);
-		quisk_demod_srate *= 4;
+		nSamples = quisk_dInterp2HB45(dsamples, nSamples, &Storage[bank].HalfBand7);
 		break;
 	case 1:		// upper sideband CW at 6 ksps
-		quisk_demod_srate /= 8;
-		quisk_filter_srate = quisk_demod_srate;
+		quisk_filter_srate = quisk_decim_srate / 8;
 		nSamples = quisk_cDecim2HB45(cSamples, nSamples, &Storage[bank].HalfBand5);
 		nSamples = quisk_cDecim2HB45(cSamples, nSamples, &Storage[bank].HalfBand4);
 		nSamples = quisk_cDecimate(cSamples, nSamples, &Storage[bank].filtDecim48to24, 2);
 		for (i = 0; i < nSamples; i++) {
-			cx = cRxFilterOut(cSamples[i], bank);
+			cx = cRxFilterOut(cSamples[i], bank, nFilter);
 			dsamples[i] = dd = creal(cx) - cimag(cx);
-			measure_audio_sum += dd * dd;
-			measure_audio_count += 1;
+			if(bank == 0) {
+				measure_audio_sum += dd * dd;
+				measure_audio_count += 1;
+			}
 		}
 		if(bank == 0)
 			dAutoNotch(dsamples, nSamples, rit_freq, quisk_filter_srate);
 		nSamples = quisk_dInterpolate(dsamples, nSamples, &Storage[bank].filtAudio12p2, 2);
 		nSamples = quisk_dInterp2HB45(dsamples, nSamples, &Storage[bank].HalfBand6);
-		quisk_demod_srate *= 4;
+		nSamples = quisk_dInterp2HB45(dsamples, nSamples, &Storage[bank].HalfBand7);
 		break;
 	case 2:	 // lower sideband SSB at 12 ksps
-		quisk_demod_srate /= 4;
-		quisk_filter_srate = quisk_demod_srate;
+		quisk_filter_srate = quisk_decim_srate / 4;
 		nSamples = quisk_cDecim2HB45(cSamples, nSamples, &Storage[bank].HalfBand5);
 		nSamples = quisk_cDecimate(cSamples, nSamples, &Storage[bank].filtDecim48to24, 2);
 		for (i = 0; i < nSamples; i++) {
-			cx = cRxFilterOut(cSamples[i], bank);
+			cx = cRxFilterOut(cSamples[i], bank, nFilter);
 			dsamples[i] = dd = creal(cx) + cimag(cx);
-			measure_audio_sum += dd * dd;
-			measure_audio_count += 1;
+			if(bank == 0) {
+				measure_audio_sum += dd * dd;
+				measure_audio_count += 1;
+			}
 		}
 		if(bank == 0)
 			dAutoNotch(dsamples, nSamples, 0, quisk_filter_srate);
 		//calc_audio_graph(dsamples, nSamples);
 		nSamples = quisk_dInterpolate(dsamples, nSamples, &Storage[bank].filtAudio24p4, 2);
-		quisk_demod_srate *= 2;
+		nSamples = quisk_dInterp2HB45(dsamples, nSamples, &Storage[bank].HalfBand7);
 		break;
 	case 3:	 // upper sideband SSB at 12 ksps
 	default:
-		quisk_demod_srate /= 4;
-		quisk_filter_srate = quisk_demod_srate;
+		quisk_filter_srate = quisk_decim_srate / 4;
 		nSamples = quisk_cDecim2HB45(cSamples, nSamples, &Storage[bank].HalfBand5);
 		nSamples = quisk_cDecimate(cSamples, nSamples, &Storage[bank].filtDecim48to24, 2);
 		for (i = 0; i < nSamples; i++) {
-			cx = cRxFilterOut(cSamples[i], bank);
+			cx = cRxFilterOut(cSamples[i], bank, nFilter);
 			dsamples[i] = dd = creal(cx) - cimag(cx);
-			measure_audio_sum += dd * dd;
-			measure_audio_count += 1;
+			if(bank == 0) {
+				measure_audio_sum += dd * dd;
+				measure_audio_count += 1;
+			}
 		}
 		if(bank == 0)
 			dAutoNotch(dsamples, nSamples, 0, quisk_filter_srate);
 		//calc_audio_graph(dsamples, nSamples);
 		nSamples = quisk_dInterpolate(dsamples, nSamples, &Storage[bank].filtAudio24p4, 2);
-		quisk_demod_srate *= 2;
+		nSamples = quisk_dInterp2HB45(dsamples, nSamples, &Storage[bank].HalfBand7);
 		break;
 	case 4:		// AM at 24 ksps
-		quisk_demod_srate /= 2;
-		quisk_filter_srate = quisk_demod_srate;
+		quisk_filter_srate = quisk_decim_srate / 2;
 		nSamples = quisk_cDecimate(cSamples, nSamples, &Storage[bank].filtDecim48to24, 2);
 		for (i = 0; i < nSamples; i++) {
-			cx = dRxFilterOut(cSamples[i], bank);
+			cx = dRxFilterOut(cSamples[i], bank, nFilter);
 			di = cabs(cx);
 			d = di + Storage[bank].dc_remove * 0.99;	// DC removal; R.G. Lyons page 553
 			di = d - Storage[bank].dc_remove;
 			Storage[bank].dc_remove = d;
 			dsamples[i] = di;
-			measure_audio_sum += di * di;
-			measure_audio_count += 1;
+			if(bank == 0) {
+				measure_audio_sum += di * di;
+				measure_audio_count += 1;
+			}
 		}
 		nSamples = quisk_dFilter(dsamples, nSamples, &Storage[bank].filtAudio24p6);
 		if(bank == 0)
 			dAutoNotch(dsamples, nSamples, 0, quisk_filter_srate);
+		nSamples = quisk_dInterp2HB45(dsamples, nSamples, &Storage[bank].HalfBand7);
 		break;
 	case 5:		// FM at 24 ksps
 	case 13:
-		quisk_demod_srate /= 2;
-		quisk_filter_srate = quisk_demod_srate;
+		quisk_filter_srate = quisk_decim_srate / 2;
 		nSamples = quisk_cDecimate(cSamples, nSamples, &Storage[bank].filtDecim48to24, 2);
 		for (i = 0; i < nSamples; i++) {
-			cx = dRxFilterOut(cSamples[i], bank);
+			cx = dRxFilterOut(cSamples[i], bank, nFilter);
 			cpx = cx * conj(Storage[bank].fm_1);
 			Storage[bank].fm_1 = cx;
-			di = quisk_demod_srate * carg(cpx);
+			di = quisk_filter_srate * carg(cpx);
 			// FM de-emphasis
 			dsamples[i] = dd = Storage[bank].FM_y_1 = di * Storage[bank].FM_a_0 +
 				Storage[bank].FM_x_1 * Storage[bank].FM_a_1 - Storage[bank].FM_y_1 * Storage[bank].FM_b_1;
 			Storage[bank].FM_x_1 = di;
-			measure_audio_sum += dd * dd;
-			measure_audio_count += 1;
+			if(bank == 0) {
+				measure_audio_sum += dd * dd;
+				measure_audio_count += 1;
+			}
 		}
 		nSamples = quisk_dDecimate(dsamples, nSamples, &Storage[bank].filtAudio24p3, 2);
 		nSamples = quisk_dFilter(dsamples, nSamples, &Storage[bank].filtAudioFmHp);
 		nSamples = quisk_dInterp2HB45(dsamples, nSamples, &Storage[bank].HalfBand6);
+		nSamples = quisk_dInterp2HB45(dsamples, nSamples, &Storage[bank].HalfBand7);
 		if(bank == 0)
 			dAutoNotch(dsamples, nSamples, 0, quisk_filter_srate);
 		break;
 	case 7:     // digital mode DGT-U at 48 ksps
-		quisk_filter_srate = quisk_demod_srate;
+		quisk_filter_srate = quisk_decim_srate;
 		for (i = 0; i < nSamples; i++) {
-			cx = cRxFilterOut(cSamples[i], bank);
+			cx = cRxFilterOut(cSamples[i], bank, nFilter);
 			dsamples[i] = dd = creal(cx) - cimag(cx);
-			measure_audio_sum += dd * dd;
-			measure_audio_count += 1;
+			if(bank == 0) {
+				measure_audio_sum += dd * dd;
+				measure_audio_count += 1;
+			}
 		}
 		if(bank == 0)
 			dAutoNotch(dsamples, nSamples, 0, quisk_filter_srate);
 		break;
 	case 8:     // digital mode DGT-L at 48 ksps
-		quisk_filter_srate = quisk_demod_srate;
+		quisk_filter_srate = quisk_decim_srate;
 		for (i = 0; i < nSamples; i++) {
-			cx = cRxFilterOut(cSamples[i], bank);
+			cx = cRxFilterOut(cSamples[i], bank, nFilter);
 			dsamples[i] = dd = creal(cx) + cimag(cx);
-			measure_audio_sum += dd * dd;
-			measure_audio_count += 1;
+			if(bank == 0) {
+				measure_audio_sum += dd * dd;
+				measure_audio_count += 1;
+			}
 		}
 		if(bank == 0)
 			dAutoNotch(dsamples, nSamples, 0, quisk_filter_srate);
 		break;
 	case 9:     // digital mode DGT-IQ at 48 ksps
-		quisk_filter_srate = quisk_demod_srate;
+		quisk_filter_srate = quisk_decim_srate;
 		if (filter_bandwidth < 19000) {		// No filtering for wide bandwidth
 			for (i = 0; i < nSamples; i++)
-				cSamples[i] = dRxFilterOut(cSamples[i], bank);
-			measure_audio_sum = measure_audio_sum + cSamples[i] * conj(cSamples[i]);
-			measure_audio_count += 1;
+				cSamples[i] = dRxFilterOut(cSamples[i], bank, nFilter);
+		}
+		if(bank == 0) {
+			for (i = 0; i < nSamples; i++) {
+				measure_audio_sum = measure_audio_sum + cSamples[i] * conj(cSamples[i]);
+				measure_audio_count += 1;
+			}
 		}
 		break;
 	case 11:	 // digital voice at 8 ksps
 	case 12:
 		quisk_check_freedv_mode();
-		quisk_demod_srate /= 3;
-		quisk_filter_srate = quisk_demod_srate;
 		nSamples = quisk_cDecimate(cSamples, nSamples, &Storage[bank].filtDecim48to16, 3);
 		if (bank == 0)
 			process_agc(&Agc1, cSamples, nSamples, 1);
 		else
 			process_agc(&Agc2, cSamples, nSamples, 1);
 		if(bank == 0)
-			dAutoNotch(dsamples, nSamples, 0, quisk_filter_srate);
+			dAutoNotch(dsamples, nSamples, 0, quisk_decim_srate / 3);
 		// Perhaps decimate by an additional fraction
 		if (quisk_decim_srate != 48000) {
 			dd = quisk_decim_srate / 48000.0;
 			nSamples = cFracDecim(cSamples, nSamples, dd);
-			quisk_demod_srate = (int)(quisk_demod_srate / dd + 0.5);
 			quisk_decim_srate = 48000;
 		}
-		quisk_demod_srate /= 2;
-		quisk_filter_srate /= 2;
+		quisk_filter_srate =8000;
 		nSamples = quisk_cDecimate(cSamples, nSamples, &Storage[bank].filtDecim16to8, 2);
 		if (pt_quisk_freedv_rx)
 			nSamples = (* pt_quisk_freedv_rx)(cSamples, dsamples, nSamples, bank);
-		for (i = 0; i < nSamples; i++) {
-			measure_audio_sum += dsamples[i] * dsamples[i];
-			measure_audio_count += 1;
+		if(bank == 0) {
+			for (i = 0; i < nSamples; i++) {
+				measure_audio_sum += dsamples[i] * dsamples[i];
+				measure_audio_count += 1;
+			}
 		}
 		nSamples = quisk_dInterpolate(dsamples, nSamples, &Storage[bank].filtAudio24p3, 3);
-		quisk_demod_srate *= 3;
+		nSamples = quisk_dInterp2HB45(dsamples, nSamples, &Storage[bank].HalfBand7);
 		break;
 	}
-	if (measure_audio_count >= quisk_filter_srate * measure_audio_time) {
+	if (bank == 0 && measure_audio_count >= quisk_filter_srate * measure_audio_time) {
 		measured_audio = sqrt(measure_audio_sum / measure_audio_count) / CLIP32 * 1e6;
 		measure_audio_sum = measure_audio_count = 0;
 	}
@@ -1783,20 +1866,24 @@ int quisk_process_samples(complex double * cSamples, int nSamples)
 {
 // Called when samples are available.
 // Samples range from about 2^16 to a max of 2^31.
-	int i, n, nout, is_key_down, interp;
+	int i, m, n, nout, is_key_down;
 	double d, di, tune;
 	double double_filter_decim;
 	complex double phase;
 	int orig_nSamples;
 	fft_data * ptFFT;
 
-	static int size_dsamples = 0;		// Current dimension of dsamples, dsamples2, orig_cSamples
+	static int size_dsamples = 0;		// Current dimension of dsamples, dsamples2, orig_cSamples, buf_cSamples
 	static int old_split_rxtx = 0;		// Prior value of split_rxtx
+	static int old_multirx_play_channel = 0;		// Prior value of multirx_play_channel
 	static double * dsamples = NULL;
 	static double * dsamples2 = NULL;
 	static complex double * orig_cSamples = NULL;
+	static complex double * buf_cSamples = NULL;
 	static complex double rxTuneVector = 1;
 	static complex double txTuneVector = 1;
+	static complex double aux1TuneVector = 1;
+	static complex double aux2TuneVector = 1;
 	static complex double sidetoneVector = BIG_VOLUME;
 	static double dOutCounter = 0;		// Cumulative net output samples for sidetone etc.
 	static int sidetoneIsOn = 0;		// The status of the sidetone
@@ -1807,7 +1894,7 @@ int quisk_process_samples(complex double * cSamples, int nSamples)
 	static struct quisk_cHB45Filter HalfBand7 = {NULL, 0, 0};
 	static struct quisk_cHB45Filter HalfBand8 = {NULL, 0, 0};
 	static struct quisk_cHB45Filter HalfBand9 = {NULL, 0, 0};
-	static struct AgcState Agc1 = {0.7, 0, 0}, Agc2 = {0.7, 0, 0};
+	static struct AgcState Agc1 = {0.7, 0, 0}, Agc2 = {0.7, 0, 0}, Agc3 = {0.7, 0, 0};
 
 #if DEBUG
 	static int printit;
@@ -1831,10 +1918,13 @@ int quisk_process_samples(complex double * cSamples, int nSamples)
 			free(dsamples2);
 		if (orig_cSamples)
 			free(orig_cSamples);
+		if (buf_cSamples)
+			free(buf_cSamples);
 		size_dsamples = nSamples * 2;
 		dsamples = (double *)malloc(size_dsamples * sizeof(double));
 		dsamples2 = (double *)malloc(size_dsamples * sizeof(double));
 		orig_cSamples = (complex double *)malloc(size_dsamples * sizeof(complex double));
+		buf_cSamples = (complex double *)malloc(size_dsamples * sizeof(complex double));
 	}
 
 #if SAMPLES_FROM_FILE == 1
@@ -1843,14 +1933,20 @@ int quisk_process_samples(complex double * cSamples, int nSamples)
     QuiskWavReadC(&hWav, cSamples, nSamples);
 #endif
 
-	is_key_down = quisk_transmit_mode || quisk_is_key_down();
+	if (rxMode == 0 || rxMode == 1)		// Thanks to Robert, DM4RW
+		is_key_down = quisk_is_key_down();
+	else
+		is_key_down = quisk_transmit_mode || quisk_is_key_down();
 	orig_nSamples = nSamples;
 	if (split_rxtx) {
 		memcpy(orig_cSamples, cSamples, nSamples * sizeof(complex double));
 		if ( ! old_split_rxtx)		// start of new split mode
 			Buffer2Chan(NULL, 0, NULL, 0);
 	}
+	if (multirx_play_channel != old_multirx_play_channel)	// change in play channel
+		Buffer2Chan(NULL, 0, NULL, 0);
 	old_split_rxtx = split_rxtx;
+	old_multirx_play_channel = multirx_play_channel;
 
 	if (is_key_down && !isFDX) {	// The key is down; replace this data block
 		dOutCounter += (double)nSamples * quisk_sound_state.playback_rate /
@@ -1997,7 +2093,7 @@ int quisk_process_samples(complex double * cSamples, int nSamples)
 	}
 #endif
 
-	nSamples = quisk_process_decimate(cSamples, nSamples, 0);
+	nSamples = quisk_process_decimate(cSamples, nSamples, 0, rxMode);
 
 #if DEBUG
 	for (i = 0; i < nSamples; i++) {
@@ -2010,20 +2106,20 @@ int quisk_process_samples(complex double * cSamples, int nSamples)
 	if (measure_freq_mode)
 		measure_freq(cSamples, nSamples, quisk_decim_srate);
 
-	nSamples = quisk_process_demodulate(cSamples, dsamples, nSamples, 0);
+	nSamples = quisk_process_demodulate(cSamples, dsamples, nSamples, 0, 0, rxMode);
 
 	if (rxMode == 9) {
 		;		// This mode is already stereo
 	}
-	else if (split_rxtx) {		// Demodulate a second channel
+	else if (split_rxtx) {		// Demodulate a second channel from the same receiver
 		phase = cexp((I * -2.0 * M_PI * (quisk_tx_tune_freq + rit_freq)) / quisk_sound_state.sample_rate);
 		// Tune the second channel to frequency
 		for (i = 0; i < orig_nSamples; i++) {
 			orig_cSamples[i] *= txTuneVector;
 			txTuneVector *= phase;
 		}
-		n = quisk_process_decimate(orig_cSamples, orig_nSamples, 1);
-		n = quisk_process_demodulate(orig_cSamples, dsamples2, n, 1);
+		n = quisk_process_decimate(orig_cSamples, orig_nSamples, 1, rxMode);
+		n = quisk_process_demodulate(orig_cSamples, dsamples2, n, 1, 0, rxMode);
 		nSamples = Buffer2Chan(dsamples, nSamples, dsamples2, n);		// buffer dsamples and dsamples2 so the count is equal
 		switch(split_rxtx) {
 		default:
@@ -2057,6 +2153,33 @@ int quisk_process_samples(complex double * cSamples, int nSamples)
 			break;
 		}
 	}
+	else if (multirx_play_channel >= 0) {		// Demodulate a second channel from a different receiver
+		memcpy(buf_cSamples, multirx_cSamples[multirx_play_channel], orig_nSamples * sizeof(complex double));
+		phase = cexp((I * -2.0 * M_PI * (multirx_freq[multirx_play_channel])) / quisk_sound_state.sample_rate);
+		// Tune the second channel to frequency
+		for (i = 0; i < orig_nSamples; i++) {
+			buf_cSamples[i] *= aux1TuneVector;
+			aux1TuneVector *= phase;
+		}
+		n = quisk_process_decimate(buf_cSamples, orig_nSamples, 1, multirx_mode[multirx_play_channel]);
+		n = quisk_process_demodulate(buf_cSamples, dsamples2, n, 1, 1, multirx_mode[multirx_play_channel]);
+		nSamples = Buffer2Chan(dsamples, nSamples, dsamples2, n);		// buffer dsamples and dsamples2 so the count is equal
+		switch(multirx_play_method) {
+		default:
+		case 0:		// play both
+			for (i = 0; i < nSamples; i++)
+				cSamples[i] = dsamples2[i] + I * dsamples2[i];
+			break;
+		case 1:		// play left
+			for (i = 0; i < nSamples; i++)
+				cSamples[i] = dsamples[i] + I * dsamples2[i];
+			break;
+		case 2:		// play right
+			for (i = 0; i < nSamples; i++)
+				cSamples[i] = dsamples2[i] + I * dsamples[i];
+			break;
+		}
+	}
 	else {		// monophonic sound played on both channels
 		for (i = 0; i < nSamples; i++) {
 			d = dsamples[i];
@@ -2064,31 +2187,57 @@ int quisk_process_samples(complex double * cSamples, int nSamples)
 		}
 	}
 
+	// play sub-receiver 1 audio on a digital output device
+	m = multirx_mode[0];
+	if (quisk_multirx_count > 0 &&
+	(m == 7 || m == 8 || m == 9 || m == 13)  &&
+	quisk_DigitalRx1Output.driver) {
+		phase = cexp((I * -2.0 * M_PI * (multirx_freq[0])) / quisk_sound_state.sample_rate);
+		// Tune the channel to frequency
+		for (i = 0; i < orig_nSamples; i++) {
+			multirx_cSamples[0][i] *= aux2TuneVector;
+			aux2TuneVector *= phase;
+		}
+		n = quisk_process_decimate(multirx_cSamples[0], orig_nSamples, 2, m);
+		n = quisk_process_demodulate(multirx_cSamples[0], dsamples2, n, 2, 2, m);
+		if (m == 9) {		// DGT-IQ
+			process_agc(&Agc3, multirx_cSamples[0], n, 1);
+		}
+		else {
+			for (i = 0; i < n; i++)
+				multirx_cSamples[0][i] = dsamples2[i] + I * dsamples2[i];
+			process_agc(&Agc3, multirx_cSamples[0], n, 0);
+		}
+		play_sound_interface(&quisk_DigitalRx1Output, n, multirx_cSamples[0], 1, 1.0);
+	}
+
 	// Perhaps decimate by an additional fraction
 	if (quisk_decim_srate != 48000) {
 		double_filter_decim = quisk_decim_srate / 48000.0;
 		nSamples = cFracDecim(cSamples, nSamples, double_filter_decim);
-		quisk_demod_srate = (int)(quisk_demod_srate / double_filter_decim + 0.5);
+		quisk_decim_srate = 48000;
 	}
 
-	// Interpolate the samples back to the play rate.
-	// quisk_demod_srate is either 24000 or 48000 +/- clock tolerance.
-	quisk_demod_srate = ((quisk_demod_srate + 12000) / 24000) * 24000;
-	interp = quisk_sound_state.playback_rate / quisk_demod_srate;
-	if (interp > 1) {
+	// Interpolate the samples from 48000 sps to the play rate.
+	switch (quisk_sound_state.playback_rate / 48000) {
+	case 1:
+		break;
+	case 2:
 		nSamples = quisk_cInterp2HB45(cSamples, nSamples, &HalfBand7);
-		interp /= 2;
-	}
-	if (interp > 1) {
+		break;
+	case 4:
+		nSamples = quisk_cInterp2HB45(cSamples, nSamples, &HalfBand7);
 		nSamples = quisk_cInterp2HB45(cSamples, nSamples, &HalfBand8);
-		interp /= 2;
-	}
-	if (interp > 1) {
+		break;
+	case 8:
+		nSamples = quisk_cInterp2HB45(cSamples, nSamples, &HalfBand7);
+		nSamples = quisk_cInterp2HB45(cSamples, nSamples, &HalfBand8);
 		nSamples = quisk_cInterp2HB45(cSamples, nSamples, &HalfBand9);
-		interp /= 2;
-	}
-	if (interp != 1)
+		break;
+	default:
 		printf ("Failure in quisk.c in integer interpolation %d %d\n", quisk_decim_srate, quisk_sound_state.playback_rate);
+		break;
+	}
 
 	// Find the peak signal amplitude
 start_agc:
@@ -2098,7 +2247,7 @@ start_agc:
 	else if (rxMode == 11 || rxMode == 12) {	// Agc already done
 		;
 	}
-	else if (split_rxtx) {		// separate AGC for left and right channels
+	else if (split_rxtx || multirx_play_channel >= 0) {		// separate AGC for left and right channels
 		for (i = 0; i < nSamples; i++) {
 			orig_cSamples[i] = cimag(cSamples[i]);
 			cSamples[i] = creal(cSamples[i]);
@@ -2198,6 +2347,7 @@ static PyObject * get_overrange(PyObject * self, PyObject * args)
 static PyObject * get_filter_rate(PyObject * self, PyObject * args)
 {	// Return the filter sample rate as used by quisk_process_samples.
 	// Changes to quisk_process_decimate or quisk_process_demodulate will require changes here.
+	// Duplicate logic is used for sub-receivers.
 	int rate, decim_srate, filter_srate;
 	if (!PyArg_ParseTuple (args, ""))
 		return NULL;
@@ -2264,6 +2414,13 @@ static PyObject * get_smeter(PyObject * self, PyObject * args)
 	return PyFloat_FromDouble(Smeter);
 }
 
+static PyObject * get_hermes_adc(PyObject * self, PyObject * args)
+{
+	if (!PyArg_ParseTuple (args, ""))
+		return NULL;
+	return PyFloat_FromDouble(hermes_adc_level);
+}
+
 static PyObject * measure_frequency(PyObject * self, PyObject * args)
 {
 	int mode;
@@ -2323,7 +2480,7 @@ static void close_udp(void)
 		close(rx_udp_socket);
 		rx_udp_socket = INVALID_SOCKET;
 	}
-	rx_udp_started = 0;
+	quisk_rx_udp_started = 0;
 #ifdef MS_WINDOWS
 	if (cleanupWSA) {
 		cleanupWSA = 0;
@@ -2347,11 +2504,17 @@ static void close_udp10(void)		// Metis-Hermes protocol
 		for (i = 4; i < 64; i++)
 			buf[i] = 0;
 		send(rx_udp_socket, (char *)buf, 64, 0);
-		QuiskSleepMicrosec(3000000);
+		QuiskSleepMicrosec(5000);
+		send(rx_udp_socket, (char *)buf, 64, 0);
+		QuiskSleepMicrosec(2000000);
 		close(rx_udp_socket);
 		rx_udp_socket = INVALID_SOCKET;
 	}
-	rx_udp_started = 0;
+	quisk_rx_udp_started = 0;
+	if (bandscopePlan) {
+		fftw_destroy_plan(bandscopePlan);
+		bandscopePlan = NULL;
+	}
 #ifdef MS_WINDOWS
 	if (cleanupWSA) {
 		cleanupWSA = 0;
@@ -2392,7 +2555,7 @@ static int quisk_read_rx_udp(complex double * samp)	// Read samples from UDP
 		else						// Decimation by factors of two
 			rx_udp_gain_correct = 1.0;
 	}
-	if ( ! rx_udp_started) {	// we never received any data
+	if ( ! quisk_rx_udp_started) {	// we never received any data
 		// send our return address until we receive UDP blocks
 		tm_wait.tv_sec = 0;
 		tm_wait.tv_usec = 5000;
@@ -2401,7 +2564,7 @@ static int quisk_read_rx_udp(complex double * samp)	// Read samples from UDP
 		if (select (rx_udp_socket + 1, &fds, NULL, NULL, &tm_wait) == 1) {	// see if data is available
 			bytes = recv(rx_udp_socket, (char *)buf, 1500,  0);	// throw away the first block
 			seq0 = buf[0] + 1;	// Next expected sequence number
-			rx_udp_started = 1;
+			quisk_rx_udp_started = 1;
 #if DEBUG_IO
 			printf("Udp data started\n");
 #endif
@@ -2462,24 +2625,23 @@ static int quisk_read_rx_udp(complex double * samp)	// Read samples from UDP
 		ptxi = (unsigned char *)&xi;
 		// convert 24-bit samples to 32-bit samples; int must be 32 bits.
 		if (is_little_endian) {
-			while (index < bytes) {
+			while (index < bytes) {		// This works for 3, 2, 1 byte samples
 				xr = xi = 0;
-				memcpy (ptxr + 1, buf + index, 3);
-				index += 3;
-				memcpy (ptxi + 1, buf + index, 3);
-				index += 3;
+				memcpy (ptxr + (4 - sample_bytes), buf + index, sample_bytes);
+				index += sample_bytes;
+				memcpy (ptxi + (4 - sample_bytes), buf + index, sample_bytes);
+				index += sample_bytes;
 				samp[nSamples++] = (xr + xi * I) * rx_udp_gain_correct;
 				xr = xi = 0;
-				memcpy (ptxr + 1, buf + index, 3);
-				index += 3;
-				memcpy (ptxi + 1, buf + index, 3);
-				index += 3;
+				memcpy (ptxr + (4 - sample_bytes), buf + index, sample_bytes);
+				index += sample_bytes;
+				memcpy (ptxi + (4 - sample_bytes), buf + index, sample_bytes);
+				index += sample_bytes;
 				samp[nSamples++] = (xr + xi * I) * rx_udp_gain_correct;
-	//if (nSamples == 2) printf("%12d %12d\n", xr, xi);
 			}
 		}
 		else {		// big-endian
-			while (index < bytes) {
+			while (index < bytes) {		// This works for 3-byte samples only
 				*(ptxr    ) = buf[index + 2];
 				*(ptxr + 1) = buf[index + 1];
 				*(ptxr + 2) = buf[index    ];
@@ -2533,29 +2695,131 @@ static int quisk_read_rx_udp(complex double * samp)	// Read samples from UDP
 	return nSamples;
 }
 
-static int read_rx_udp10(complex double * samp)	// Read samples from UDP
-{		// Size of complex sample array is SAMP_BUFFER_SIZE
-	ssize_t bytes;
-	unsigned char buf[1500];	// Maximum Ethernet is 1500 bytes.
-	unsigned int seq;
-	static unsigned int seq0;	// must be 32 bits
-	static int key_state = 0;
-	int i, nSamples, xr, xi, index, start, want_samples, dindex, state;
+static int quisk_hermes_is_ready(int rx_udp_socket)
+{		// Start Hermes; return 1 when we are ready to receive data
+	unsigned char buf[1500];
+	int i, dummy;
 	struct timeval tm_wait;
 	fd_set fds;
 
-	if ( ! rx_udp_started) {	// we never received any data
-		// send our return address until we receive UDP blocks
+	if (rx_udp_socket == INVALID_SOCKET)
+		return 0;
+	switch (quisk_multirx_state) {
+	case 0:			// Start or restart
 		buf[0] = 0xEF;
 		buf[1] = 0xFE;
 		buf[2] = 0x04;
-		buf[3] = 0x01;
+		buf[3] = 0x00;
 		for (i = 4; i < 64; i++)
 			buf[i] = 0;
-		send(rx_udp_socket, (char *)buf, 64, 0);
+		send(rx_udp_socket, (char *)buf, 64, 0);		// send Stop
+		quisk_multirx_state++;
+		QuiskSleepMicrosec(2000);
+		return 0;
+	case 1:
+		buf[0] = 0xEF;
+		buf[1] = 0xFE;
+		buf[2] = 0x04;
+		buf[3] = 0x00;
+		for (i = 4; i < 64; i++)
+			buf[i] = 0;
+		send(rx_udp_socket, (char *)buf, 64, 0);		// send Stop
+		quisk_multirx_state++;
+		QuiskSleepMicrosec(9000);
+		return 0;
+	case 2:
+		while (1) {
+			tm_wait.tv_sec = 0;			// throw away all pending records
+			tm_wait.tv_usec = 0;
+			FD_ZERO (&fds);
+			FD_SET (rx_udp_socket, &fds);
+			if (select (rx_udp_socket + 1, &fds, NULL, NULL, &tm_wait) != 1)
+				break;
+			recv(rx_udp_socket, (char *)buf, 1500,  0);
+		}
+		quisk_multirx_state++;
+		return 0;
+	case 3:
+		quisk_multirx_count = quisk_pc_to_hermes[3] >> 3 & 0x7;		// number of receivers
+		for (i = 0; i < quisk_multirx_count; i++)
+			if ( ! multirx_fft_data[i].samples)		// Check that buffer exists
+				multirx_fft_data[i].samples = (fftw_complex *)malloc(multirx_fft_width * sizeof(fftw_complex));
+		quisk_hermes_tx_send(0, NULL);
+		quisk_multirx_state++;
+		return 0;
+	case 4:
+	case 5:
+	case 6:
+	case 7:
+		dummy = 999999;		// enable transmit
+		quisk_hermes_tx_send(rx_udp_socket, &dummy);	// send packets with number of receivers
+		quisk_multirx_state++;
+		QuiskSleepMicrosec(2000);
+		return 0;
+	case 8:
+		if (quisk_rx_udp_started) {
+			quisk_multirx_state++;
+		}
+		else {
+			// send our return address until we receive UDP blocks
+			buf[0] = 0xEF;
+			buf[1] = 0xFE;
+			buf[2] = 0x04;
+			buf[3] = 0x03;
+			for (i = 4; i < 64; i++)
+				buf[i] = 0;
+			send(rx_udp_socket, (char *)buf, 64, 0);
+			QuiskSleepMicrosec(2000);
+		}
+		return 1;
+	default:
+		return 1;
+	}
+}
+
+static int read_rx_udp10(complex double * samp)	// Read samples from UDP using the Hermes protocol.
+{		// Size of complex sample array is SAMP_BUFFER_SIZE.  Called from the sound thread.
+	ssize_t bytes;
+	unsigned char buf[1500];
+	unsigned int seq;
+	unsigned int hlwp = 0;
+	static unsigned int seq0;
+	static int key_state;
+	static int tx_records;
+	static int max_multirx_count=0;
+	int i, j, nSamples, xr, xi, index, start, want_samples, dindex, state, num_records;
+	complex double c;
+	struct timeval tm_wait;
+	fd_set fds;
+
+	if ( ! quisk_hermes_is_ready(rx_udp_socket)) {
+		seq0 = 0;
+		key_state = 0;
+		tx_records = 0;
+		quisk_rx_udp_started = 0;
+		multirx_fft_next_index = 0;
+		multirx_fft_next_state = 0;
+		for (i = 0; i < QUISK_MAX_RECEIVERS; i++)
+			multirx_fft_data[i].index = 0;
+		return 0;
 	}
 	nSamples = 0;
 	want_samples = (int)(quisk_sound_state.data_poll_usec * 1e-6 * quisk_sound_state.sample_rate + 0.5);
+	num_records = 504 / ((quisk_multirx_count + 1) * 6 + 2);	// number of samples in each of two blocks for each receiver
+	if (quisk_multirx_count) {
+		if (multirx_sample_size < want_samples + 2000) {
+			multirx_sample_size = want_samples * 2 + 2000;
+			for (i = 0; i < max_multirx_count; i++) {
+				free(multirx_cSamples[i]);
+				multirx_cSamples[i] = (complex double *)malloc(multirx_sample_size * sizeof(complex double));
+			}
+		}
+		if (quisk_multirx_count > max_multirx_count) {
+			for (i = max_multirx_count; i < quisk_multirx_count; i++)
+				multirx_cSamples[i] = (complex double *)malloc(multirx_sample_size * sizeof(complex double));
+			max_multirx_count = quisk_multirx_count;
+		}
+	}
 	while (nSamples < want_samples) {		// read several UDP blocks
 		tm_wait.tv_sec = 0;
 		tm_wait.tv_usec = 100000; // Linux seems to have problems with very small time intervals
@@ -2580,14 +2844,46 @@ static int read_rx_udp10(complex double * samp)	// Read samples from UDP
 		if (bytes != 1032 || buf[0] != 0xEF || buf[1] != 0xFE || buf[2] != 0x01) {		// Known size of sample block
 			quisk_sound_state.read_error++;
 #if DEBUG_IO
-			printf("read_rx_udp10: Bad block size or header\n");
+			printf("read_rx_udp10: Bad block size %d or header\n", (int)bytes);
 #endif
+			return 0;
+		}
+		////   Bandscope data - reversed byte order ?????
+		if (buf[3] == 0x04 && bandscopeSamples) {		// ADC samples for bandscope
+			seq = buf[7];		// sequence number
+			seq = seq & (bandscopeBlockCount - 1);	// 0, 1, 2, ...
+			switch (bandscopeState) {
+			case 0:	// Start - wait for the start of a block and record block one
+				if (seq == 0) {
+					for (i = 0, j = 8; i < 512; i++, j+= 2)
+						bandscopeSamples[i] = (double)(short)(buf[j + 1] << 8 | buf[j]);
+					bandscopeState = 1;
+				}
+				break;
+			default:
+			case 1:	// Record blocks
+				if (seq == bandscopeState) {
+					for (i = 0, j = 8; i < 512; i++, j+= 2)
+						bandscopeSamples[i + 512 * seq] = (double)(short)(buf[j + 1] << 8 | buf[j]);
+					if (++bandscopeState >= bandscopeBlockCount)
+						bandscopeState = 99;
+				}
+				else {
+					bandscopeState = 0;	// Error
+				}
+				break;
+			case 99:	// wait until the complete block is used
+				break;
+			}
 			continue;
 		}
+		////   ADC Rx samples
 		if (buf[3] != 0x06)		// End point 6: I/Q and mic samples
-			continue;
-		rx_udp_started = 1;
+			return 0;
 		seq = buf[4] << 24 | buf[5] << 16 | buf[6] << 8 | buf[7];	// sequence number
+		quisk_rx_udp_started = 1;
+		tx_records += num_records * 2;		// total samples for each receiver
+		quisk_hermes_tx_send(rx_udp_socket, &tx_records);		// send Tx samples, decrement tx_records
 		if (seq != seq0) {
 #if DEBUG_IO
 			printf("read_rx_udp10: Bad sequence want %d got %d\n", seq0, seq);
@@ -2595,7 +2891,6 @@ static int read_rx_udp10(complex double * samp)	// Read samples from UDP
 			quisk_sound_state.read_error++;
 		}
 		seq0 = seq + 1;		// Next expected sequence number
-		quisk_hermes_tx_send();
 		for (start = 11; start < 1000; start += 512) {
 			// check the sync bytes
 			if (buf[start - 3] != 0x7F || buf[start - 2] != 0x7F || buf[start - 1] != 0x7F) {
@@ -2603,17 +2898,41 @@ static int read_rx_udp10(complex double * samp)	// Read samples from UDP
 				printf("read_rx_udp10: Bad sync byte\n");
 #endif
 				quisk_sound_state.read_error++;
-				break;
 			}
 			// read five bytes of control information.  start is the index of C0.
-			dindex = buf[start] >> 3;
+			// Changes for HermesLite v2 thanks to Steve, KF7O
+			dindex = buf[start] >> 1;
+			if (dindex & 0x40) {	// the ACK bit C0[7] is set
+				if (quisk_hermeslite_writepointer > 0) {
+					// Look for match
+					hlwp = 5*(quisk_hermeslite_writepointer-1);			
+					if ((dindex == (quisk_hermeslite_writequeue[hlwp])) &&
+						(buf[start+1] == quisk_hermeslite_writequeue[hlwp+1]) &&
+						(buf[start+2] == quisk_hermeslite_writequeue[hlwp+2]) &&
+						(buf[start+3] == quisk_hermeslite_writequeue[hlwp+3]) &&
+						(buf[start+4] == quisk_hermeslite_writequeue[hlwp+4])) {
+						
+						printf("Response %d received\n",dindex);
+						quisk_hermeslite_writepointer--;
+						quisk_hermeslite_writeattempts = 0;
+					} else {
+						printf("ERROR: Nonmatching Hermes-Lite response %d seen\n",dindex);
+					}
+				} else {
+					printf("ERROR: Unexpected Hermes-Lite response %d seen\n",dindex);
+				}
+			} else {
+				dindex = dindex >> 2;
+			}
+			// this does not save data for Hermes-Lite ACK
 			if (dindex >= 0 && dindex <= 4) {		// Save the data returned by the hardware
 				quisk_hermes_to_pc[dindex * 4    ] = buf[start + 1];	// C1 to C4
 				quisk_hermes_to_pc[dindex * 4 + 1] = buf[start + 2];
 				quisk_hermes_to_pc[dindex * 4 + 2] = buf[start + 3];
 				quisk_hermes_to_pc[dindex * 4 + 3] = buf[start + 4];
-			}
+			} 
 			if (dindex == 0) {		// C0 is 0b00000xxx
+				quisk_hermes_code_version = quisk_hermes_to_pc[3];
 				if ((quisk_hermes_to_pc[0] & 0x01) != 0)	// C1
 					quisk_sound_state.overrange++;
 				if (rxMode == 0 || rxMode == 1) {
@@ -2630,13 +2949,39 @@ static int read_rx_udp10(complex double * samp)	// Read samples from UDP
 			}
 			// convert 24-bit samples to 32-bit samples; int must be 32 bits.
 			index = start + 5;
-			for (i = 0; i < 63; i++) {		// read 63 records
+			for (i = 0; i < num_records; i++) {		// read records
 				xi = buf[index    ] << 24 | buf[index + 1] << 16 | buf[index + 2] << 8;
 				xr = buf[index + 3] << 24 | buf[index + 4] << 16 | buf[index + 5] << 8;
-				samp[nSamples++] = xr + xi * I;
-				index += 8;
+				samp[nSamples] = xr + xi * I;		// first receiver
+				index += 6;
+				for (j = 0; j < quisk_multirx_count; j++) {		// multirx receivers
+					xi = buf[index    ] << 24 | buf[index + 1] << 16 | buf[index + 2] << 8;
+					xr = buf[index + 3] << 24 | buf[index + 4] << 16 | buf[index + 5] << 8;
+					c = xr + xi * I;
+					multirx_cSamples[j][nSamples] = c;
+					if (multirx_fft_data[j].index < multirx_fft_width)
+						multirx_fft_data[j].samples[multirx_fft_data[j].index++] = c;
+					index += 6;
+				}
+				nSamples++;
+				index += 2;
 			}
 		}
+	}
+	if ((quisk_pc_to_hermes[3] >> 3 & 0x7) != quisk_multirx_count &&	// change in number of receivers
+		( ! quisk_multirx_count || multirx_fft_next_state == 2)) {		// wait until the current FFT is finished
+			quisk_multirx_state = 0;		// Do not change receiver count without stopping Hermes and restarting
+	}
+	if (multirx_fft_next_state == 2) {		// previous FFT is done
+		if (++multirx_fft_next_index >= quisk_multirx_count)
+			multirx_fft_next_index = 0;
+		multirx_fft_next_state = 0;
+	}
+	if (quisk_multirx_count && multirx_fft_next_state == 0 && multirx_fft_data[multirx_fft_next_index].index >= multirx_fft_width) {		// FFT is read to run
+		memcpy(multirx_fft_next_samples, multirx_fft_data[multirx_fft_next_index].samples, multirx_fft_width * sizeof(fftw_complex));
+		multirx_fft_data[multirx_fft_next_index].index = 0;
+		multirx_fft_next_time = 1.0 / graph_refresh / quisk_multirx_count;
+		multirx_fft_next_state = 1;			// this FFT is ready to run
 	}
 	return nSamples;
 }
@@ -2668,7 +3013,7 @@ static int read_rx_udp17(complex double * cSamples0)	// Read samples from UDP
 			rx_udp_gain_correct = 1.0;
 		//printf ("Gain %d %.8lf\n", dec, rx_udp_gain_correct);
 	}
-	if ( ! rx_udp_started) {	// we never received any data
+	if ( ! quisk_rx_udp_started) {	// we never received any data
 		// send our return address until we receive UDP blocks
 		tm_wait.tv_sec = 0;
 		tm_wait.tv_usec = 5000;
@@ -2677,7 +3022,7 @@ static int read_rx_udp17(complex double * cSamples0)	// Read samples from UDP
 		if (select (rx_udp_socket + 1, &fds, NULL, NULL, &tm_wait) == 1) {	// see if data is available
 			bytes = recv(rx_udp_socket, (char *)buf, 1500,  0);	// throw away the first block
 			seq0 = buf[0] + 1;	// Next expected sequence number
-			rx_udp_started = 1;
+			quisk_rx_udp_started = 1;
 #if DEBUG_IO
 			printf("Udp data started\n");
 #endif
@@ -2840,7 +3185,7 @@ static int read_rx_udp17(complex double * cSamples0)	// Read samples from UDP
 static PyObject * open_rx_udp(PyObject * self, PyObject * args)
 {
 	const char * ip;
-	int port;
+	int i, j, port;
 	char buf[128];
 	struct sockaddr_in Addr;
 	int recvsize;
@@ -2897,8 +3242,20 @@ static PyObject * open_rx_udp(PyObject * self, PyObject * args)
 			sprintf(buf, "Capture from UDP %s port 0x%X", ip, port);
 			if (quisk_use_rx_udp == 17)
 				quisk_sample_source(NULL, close_udp, read_rx_udp17);
-			else if (quisk_use_rx_udp == 10)
+			else if (quisk_use_rx_udp == 10) {
 				quisk_sample_source(NULL, close_udp10, read_rx_udp10);
+				bandscopeSamples = (double *)malloc(bandscope_size * sizeof(double));
+				bandscopeWindow = (double *)malloc(bandscope_size * sizeof(double));
+				bandscopeAverage = (double *)malloc((bandscope_size / 2 + 1 + 1) * sizeof(double));
+				bandscopeFFT = (complex double *)malloc((bandscope_size / 2 + 1) * sizeof(complex double));
+				bandscopePlan = fftw_plan_dft_r2c_1d(bandscope_size, bandscopeSamples, bandscopeFFT, FFTW_MEASURE);
+				// Create the fft window
+				for (i = 0, j = -bandscope_size / 2; i < bandscope_size; i++, j++)
+					bandscopeWindow[i] = 0.5 + 0.5 * cos(2. * M_PI * j / bandscope_size);	// Hanning
+				// zero the average array
+				for (i = 0; i < bandscope_size / 2 + 1; i++)
+					bandscopeAverage[i] = 0;
+			}
 			else
 				quisk_sample_source(NULL, close_udp, quisk_read_rx_udp);
 #if DEBUG_IO
@@ -2997,7 +3354,6 @@ static PyObject * change_rates(PyObject * self, PyObject * args)	// Called from 
 static PyObject * change_rate(PyObject * self, PyObject * args)	// Called from GUI thread
 {	// Change to a new sample rate
 	int rate, avg;
-    double d;
 
 	if (!PyArg_ParseTuple (args, "ii", &rate, &avg))
 		return NULL;
@@ -3008,16 +3364,6 @@ static PyObject * change_rate(PyObject * self, PyObject * args)	// Called from G
 		quisk_sound_state.sample_rate = rate;
 		fft_sample_rate = rate;
 	}
-	if (scan_blocks > 1) {
-		d = (double)scan_sample_rate / scan_blocks;	// effective rate for graph refresh
-		d = d / graph_refresh / fft_size;
-		if (d < 1.0)
-			d = 1.0;
-		average_count = (int)(d + 0.5);
-	}
-    else {
-	    average_count = avg;
-    }
 	rx_udp_gain_correct = 0;	// re-calculate JIM
 	Py_INCREF (Py_None);
 	return Py_None;
@@ -3077,11 +3423,69 @@ static PyObject * pc_to_hermes(PyObject * self, PyObject * args)
 	return Py_None;
 }
 
+// Changes for HermesLite v2 thanks to Steve, KF7O
+static PyObject * pc_to_hermeslite_writequeue(PyObject * self, PyObject * args)
+{
+	PyObject * byteArray;
+
+	if (!PyArg_ParseTuple (args, "O", &byteArray))
+		return NULL;
+	if ( ! PyByteArray_Check(byteArray)) {
+		PyErr_SetString (QuiskError, "Object is not a bytearray.");
+		return NULL;
+	}
+	if (PyByteArray_Size(byteArray) != 4 * 5) {
+		PyErr_SetString (QuiskError, "Bytearray size must be 4 * 5.");
+		return NULL;
+	}
+	memmove(quisk_hermeslite_writequeue, PyByteArray_AsString(byteArray), 4 * 5);
+	Py_INCREF (Py_None);
+	return Py_None;
+}
+
+static PyObject * set_hermeslite_writepointer(PyObject * self, PyObject * args)
+{
+	if (!PyArg_ParseTuple (args, "I", &quisk_hermeslite_writepointer))
+		return NULL;
+	if (quisk_hermeslite_writepointer > 4 || quisk_hermeslite_writepointer < 0) {
+		PyErr_SetString (QuiskError, "Hermeslite writepointer must be >=0 and <=4.");
+		return NULL;		
+	}
+	Py_INCREF (Py_None);
+	return Py_None;
+}
+
+static PyObject * get_hermeslite_writepointer(PyObject * self, PyObject * args)
+{
+	if (!PyArg_ParseTuple (args, ""))
+		return NULL;
+	return Py_BuildValue("I",quisk_hermeslite_writepointer);
+}
+
+
 static PyObject * hermes_to_pc(PyObject * self, PyObject * args)
 {
 	if (!PyArg_ParseTuple (args, ""))
 		return NULL;
 	return PyByteArray_FromStringAndSize((char *)quisk_hermes_to_pc, 5 * 4);
+}
+
+static PyObject * set_hermes_id(PyObject * self, PyObject * args)
+{
+	if (!PyArg_ParseTuple (args, "ii", &hermes_code_version, &hermes_board_id))
+		return NULL;
+	switch(hermes_board_id) {
+	default:
+	case 3:		// Angelia and Odyssey-2
+		bandscopeBlockCount = 32;
+		break;
+	case 6:		// Hermes Lite
+		bandscopeBlockCount = 4;
+		break;
+	}
+	bandscope_size = bandscopeBlockCount * 512;
+	Py_INCREF (Py_None);
+	return Py_None;
 }
 
 static PyObject * invert_spectrum(PyObject * self, PyObject * args)
@@ -3103,12 +3507,13 @@ static PyObject * set_agc(PyObject * self, PyObject * args)
 static PyObject * set_filters(PyObject * self, PyObject * args)
 {  // Enter the coefficients of the I and Q digital filters.  The storage for
    // filters is not malloc'd because filters may be changed while being used.
+   // Multiple filters are available at nFilter.
 	PyObject * filterI, * filterQ;
-	int i, size;
+	int i, size, nFilter, bw;
 	PyObject * obj;
 	char buf98[98];
 
-	if (!PyArg_ParseTuple (args, "OOi", &filterI, &filterQ, &filter_bandwidth))
+	if (!PyArg_ParseTuple (args, "OOii", &filterI, &filterQ, &bw, &nFilter))
 		return NULL;
 	if (PySequence_Check(filterI) != 1) {
 		PyErr_SetString (QuiskError, "Filter I is not a sequence");
@@ -3128,12 +3533,14 @@ static PyObject * set_filters(PyObject * self, PyObject * args)
 		PyErr_SetString (QuiskError, buf98);
 		return NULL;
 	}
+	if (nFilter == 0)
+		filter_bandwidth = bw;
 	for (i = 0; i < size; i++) {
 		obj = PySequence_GetItem(filterI, i);
-		cFilterI[i] = PyFloat_AsDouble(obj);
+		cFilterI[nFilter][i] = PyFloat_AsDouble(obj);
 		Py_XDECREF(obj);
 		obj = PySequence_GetItem(filterQ, i);
-		cFilterQ[i] = PyFloat_AsDouble(obj);
+		cFilterQ[nFilter][i] = PyFloat_AsDouble(obj);
 		Py_XDECREF(obj);
 	}
 	sizeFilter = size;
@@ -3294,6 +3701,170 @@ static PyObject * set_PTT(PyObject * self, PyObject * args)
 	return Py_None;
 }
 
+static PyObject * set_multirx_mode(PyObject * self, PyObject * args)
+{
+	int index, mode;
+
+	if (!PyArg_ParseTuple (args, "ii", &index, &mode))
+		return NULL;
+	if (index < QUISK_MAX_RECEIVERS)
+		multirx_mode[index] = mode;
+	Py_INCREF (Py_None);
+	return Py_None;
+}
+
+static PyObject * set_multirx_freq(PyObject * self, PyObject * args)
+{
+	int index, freq;
+
+	if (!PyArg_ParseTuple (args, "ii", &index, &freq))
+		return NULL;
+	if (index < QUISK_MAX_RECEIVERS)
+		multirx_freq[index] = freq;
+	Py_INCREF (Py_None);
+	return Py_None;
+}
+
+static PyObject * set_multirx_play_method(PyObject * self, PyObject * args)
+{
+	if (!PyArg_ParseTuple (args, "i", &multirx_play_method))
+		return NULL;
+	Py_INCREF (Py_None);
+	return Py_None;
+}
+
+static PyObject * set_multirx_play_channel(PyObject * self, PyObject * args)
+{
+	if (!PyArg_ParseTuple (args, "i", &multirx_play_channel))
+		return NULL;
+	if (multirx_play_channel >= QUISK_MAX_RECEIVERS)
+		multirx_play_channel = -1;
+	Py_INCREF (Py_None);
+	return Py_None;
+}
+
+static PyObject * get_multirx_graph(PyObject * self, PyObject * args)	// Called by the GUI thread
+{
+	int i, j, k;
+	double d1, d2, scale;
+	static double * fft_window=NULL;		// Window for FFT data
+	PyObject * retrn, * data;
+	static double time0=0;			// time of last graph
+
+	if (!PyArg_ParseTuple (args, ""))
+		return NULL;
+	if ( ! fft_window) {
+		// Create the fft window
+		fft_window = (double *) malloc(sizeof(double) * multirx_fft_width);
+		for (i = 0, j = -multirx_fft_width / 2; i < multirx_fft_width; i++, j++)
+			fft_window[i] = 0.5 + 0.5 * cos(2. * M_PI * j / multirx_fft_width);	// Hanning
+	}
+	retrn = PyTuple_New(2);
+	if (multirx_fft_next_state == 1 && QuiskTimeSec() - time0 >= multirx_fft_next_time) {
+		time0 = QuiskTimeSec();
+		// The FFT is ready to run.  Calculate FFT.
+		for (i = 0; i < multirx_fft_width; i++)		// multiply by window
+			multirx_fft_next_samples[i] *= fft_window[i];
+		fftw_execute(multirx_fft_next_plan);
+		// Average the fft data into the graph in order of frequency
+		data = PyTuple_New(multirx_data_width);
+		scale = log10(multirx_fft_width) + 31.0 * log10(2.0);
+		scale *= 20.0;
+		j = MULTIRX_FFT_MULT;
+		k = 0;
+		d1 = 0;
+		for (i = multirx_fft_width / 2; i < multirx_fft_width; i++) {			// Negative frequencies
+			d1 += cabs(multirx_fft_next_samples[i]);
+			if (--j == 0) {
+				d2 = 20.0 * log10(d1) - scale;
+				if (d2 < -200)
+					d2 = -200;
+				PyTuple_SetItem(data, k++, PyFloat_FromDouble(d2));
+				d1 = 0;
+				j = MULTIRX_FFT_MULT;
+			}
+		}
+		for (i = 0; i < multirx_fft_width / 2; i++) {					// Positive frequencies
+			d1 += cabs(multirx_fft_next_samples[i]);
+			if (--j == 0) {
+				d2 = 20.0 * log10(d1) - scale;
+				if (d2 < -200)
+					d2 = -200;
+				PyTuple_SetItem(data, k++, PyFloat_FromDouble(d2));
+				d1 = 0;
+				j = MULTIRX_FFT_MULT;
+			}
+		}
+		PyTuple_SetItem(retrn, 0, data);
+		PyTuple_SetItem(retrn, 1, PyInt_FromLong(multirx_fft_next_index));
+		multirx_fft_next_state = 2;			// This FFT is done.
+	}
+	else {
+		data = PyTuple_New(0);
+		PyTuple_SetItem(retrn, 0, data);
+		PyTuple_SetItem(retrn, 1, PyInt_FromLong(-1));
+	}
+	return retrn;
+}
+
+static PyObject * get_bandscope(void)	// Called by the GUI thread
+{
+	int i, j, j1, j2, L;
+	static int fft_count = 0;
+	static double the_max = 0;
+	static double time0=0;			// time of last graph
+	double d1, d2, sample, frac, scale;
+	PyObject * tuple2;
+
+	if (bandscopeState == 99 && bandscopePlan) {	// bandscope samples are ready
+		for (i = 0; i < bandscope_size; i++) {
+			d1 = fabs(bandscopeSamples[i]);	// samples are 12 bit integers, -2048 to 2047
+			if (d1 > the_max)
+				the_max = d1;
+			bandscopeSamples[i] *= bandscopeWindow[i];	// multiply by window
+		}
+		fftw_execute(bandscopePlan);		// Calculate forward FFT
+		// The return FFT has length bandscope_size / 2 + 1
+		L = bandscope_size / 2 + 1;
+		for (i = 0; i < L; i++)
+			bandscopeAverage[i] += cabs(bandscopeFFT[i]);
+		bandscopeState = 0;
+		fft_count++;
+		if (QuiskTimeSec() - time0 >= 1.0 / graph_refresh) {	// return FFT data
+			bandscopeAverage[L] = 0.0;	// in case we run off the end
+			scale = log10(fft_count) + log10(bandscope_size) + log10(2048.0);
+			// Average the return FFT into the data width
+			tuple2 = PyTuple_New(graph_width);
+			frac = (double)L / graph_width;
+			for (i = 0; i < graph_width; i++) {	// for each pixel
+				d1 = i * frac;
+				d2 = (i + 1) * frac;
+				j1 = floor(d1);
+				j2 = floor(d2);
+				sample = (j1 + 1 - d1) * bandscopeAverage[j1];
+				for (j = j1 + 1; j < j2; j++)
+					sample += cabs(bandscopeAverage[j]);
+				sample += (d2 - j2) * bandscopeAverage[j2];
+				sample = sample / frac;
+				// Normalize to max == 1
+				sample = 20.0 * (log10(sample) - scale);
+				if (sample < -200)
+					sample = -200;
+				PyTuple_SetItem(tuple2, i, PyFloat_FromDouble(sample));
+			}
+			fft_count = 0;
+			time0 = QuiskTimeSec();
+			hermes_adc_level = the_max;
+			the_max = 0;
+			for (i = 0; i < L; i++)
+				bandscopeAverage[i] = 0;
+			return tuple2;
+		}
+	}
+	Py_INCREF(Py_None);	// No data yet
+	return Py_None;
+}
+
 static PyObject * get_graph(PyObject * self, PyObject * args)	// Called by the GUI thread
 {
 	int i, j, k, m, n, index, ffts, ii, mm, m0, deltam;
@@ -3306,9 +3877,13 @@ static PyObject * get_graph(PyObject * self, PyObject * args)	// Called by the G
 	static double * fft_avg=NULL;	// Array to average the FFT
 	static double * fft_tmp;
 	static int count_fft=0;			// how many fft's have occurred (for average)
+	static double time0=0;			// time of last graph
 
 	if (!PyArg_ParseTuple (args, "idd", &k, &zoom, &deltaf))
 		return NULL;
+	if (k == 2) {
+		return get_bandscope();
+	}
 	if (k != use_fft) {		// change in data return type; re-initialize
 		use_fft = k;
 		count_fft = 0;
@@ -3346,7 +3921,7 @@ static PyObject * get_graph(PyObject * self, PyObject * args)	// Called by the G
 		// Continue with FFT calculation
 		for (i = 0; i < fft_size; i++)		// multiply by window
 			ptFft->samples[i] *= fft_window[i];
-		fftw_execute(ptFft->plan);	// Calculate FFT
+		fftw_execute_dft(quisk_fft_plan, ptFft->samples, ptFft->samples);	// Calculate FFT
 		// Create RMS s-meter value at known bandwidth
 		// d2 is the number of FFT bins required for the bandwidth
 		// i is the starting bin number from  - sample_rate / 2 to + sample_rate / 2
@@ -3418,8 +3993,7 @@ static PyObject * get_graph(PyObject * self, PyObject * args)	// Called by the G
 				fft_avg[k++] += cabs(ptFft->samples[i]);
 		}
 		ptFft->filled = 0;
-		if (count_fft >= average_count) {
-			count_fft = 0;
+		if (count_fft > 0 && QuiskTimeSec() - time0 >= 1.0 / graph_refresh) {
 			// We have averaged enough fft's to return the graph data.
 			// Average the fft data of size fft_size into the size of data_width.
 			n = (int)(zoom * (double)fft_size / data_width + 0.5);
@@ -3436,7 +4010,7 @@ static PyObject * get_graph(PyObject * self, PyObject * args)	// Called by the G
 				fft_avg[i] = d2;
 			}
 			scale = 1.0 / 2147483647.0 / fft_size;
-			Smeter = meter * scale * scale / average_count;		// record the new s-meter value
+			Smeter = meter * scale * scale / count_fft;		// record the new s-meter value
 			meter = 0;
 			if (Smeter > 0)
 				Smeter = 10.0 * log10(Smeter);
@@ -3446,9 +4020,9 @@ static PyObject * get_graph(PyObject * self, PyObject * args)	// Called by the G
 			// into adjacent bins. It is the amplitude that is spread out, not the squared amplitude.
 			Smeter += 4.25969;
 			tuple2 = PyTuple_New(data_width);
-			// scale = 1.0 / average_count / fft_size;	// Divide by sample count
+			// scale = 1.0 / count_fft / fft_size;	// Divide by sample count
 			// scale /= pow(2.0, 31);			// Normalize to max == 1
-			scale = log10(average_count) + log10(fft_size) + 31.0 * log10(2.0);
+			scale = log10(count_fft) + log10(fft_size) + 31.0 * log10(2.0);
 			scale *= 20.0;
 			for (i = 0; i < data_width; i++) {
 				d2 = 20.0 * log10(fft_avg[i]) - scale;
@@ -3459,6 +4033,8 @@ static PyObject * get_graph(PyObject * self, PyObject * args)	// Called by the G
 			}
 			for (i = 0; i < fft_size; i++)
 				fft_avg[i] = 0;
+			count_fft = 0;
+			time0 = QuiskTimeSec();
 			return tuple2;
 		}
 	}
@@ -3474,19 +4050,16 @@ static PyObject * get_filter(PyObject * self, PyObject * args)
 	complex double cx;
 	double d2, scale, accI, accQ;
 	double * average, * bufI, * bufQ;
-	fft_data * FFT;
-	fftw_complex * pt;
 	double phase, delta;
+	static fftw_complex * samples;
+	static fftw_plan plan;
 
 	if (!PyArg_ParseTuple (args, ""))
 		return NULL;
 
 	// Create space for the fft of size data_width
-	FFT = (fft_data *)malloc(sizeof(fft_data));
-	FFT->filled = 0;
-	FFT->index = 0;
-	pt = FFT->samples = (fftw_complex *) fftw_malloc(sizeof(fftw_complex) * data_width);
-	FFT->plan = fftw_plan_dft_1d(data_width, pt, pt, FFTW_FORWARD, FFTW_MEASURE);
+	samples = (fftw_complex *) fftw_malloc(sizeof(fftw_complex) * data_width);
+	plan = fftw_plan_dft_1d(data_width, samples, samples, FFTW_FORWARD, FFTW_MEASURE);
 	average = (double *) malloc(sizeof(double) * (data_width + sizeFilter));
 	bufI = (double *) malloc(sizeof(double) * sizeFilter);
 	bufQ = (double *) malloc(sizeof(double) * sizeFilter);
@@ -3513,8 +4086,8 @@ static PyObject * get_filter(PyObject * self, PyObject * args)
 		accI = accQ = 0;
 		j = n;
 		for (k = 0; k < sizeFilter; k++) {
-			accI += bufI[j] * cFilterI[k];
-			accQ += bufQ[j] * cFilterQ[k];
+			accI += bufI[j] * cFilterI[0][k];
+			accQ += bufQ[j] * cFilterQ[0][k];
 			if (++j >= sizeFilter)
 				j = 0;
 		}
@@ -3522,16 +4095,16 @@ static PyObject * get_filter(PyObject * self, PyObject * args)
 		if (++n >= sizeFilter)
 			n = 0;
 		if (time >= sizeFilter)
-			FFT->samples[time - sizeFilter] = cx;
+			samples[time - sizeFilter] = cx;
 	}
 
 	for (i = 0; i < data_width; i++)	// multiply by window
-		FFT->samples[i] *= fft_window[i];
-	fftw_execute(FFT->plan);		// Calculate FFT
+		samples[i] *= fft_window[i];
+	fftw_execute(plan);		// Calculate FFT
 	// Normalize and convert to log10
 	scale = 1. / data_width;
 	for (k = 0; k < data_width; k++) {
-		cx = FFT->samples[k];
+		cx = samples[k];
 		average[k] = cabs(cx) * scale;
 		if (average[k] <= 1e-7)		// limit to -140 dB
 			average[k] = -7;
@@ -3552,9 +4125,8 @@ static PyObject * get_filter(PyObject * self, PyObject * args)
 	free(bufQ);
 	free(bufI);
 	free(average);
-	fftw_destroy_plan(FFT->plan);
-	fftw_free(FFT->samples);
-	free(FFT);
+	fftw_destroy_plan(plan);
+	fftw_free(samples);
 
 	return tuple2;
 }
@@ -3762,8 +4334,8 @@ static PyObject * record_app(PyObject * self, PyObject * args)
 	int i, j, rate;
 	fftw_complex * pt;
 
-	if (!PyArg_ParseTuple (args, "OOiiiil", &pyApp, &quisk_pyConfig, &data_width,
-		&fft_size, &average_count, &rate, &quisk_mainwin_handle))
+	if (!PyArg_ParseTuple (args, "OOiiiiil", &pyApp, &quisk_pyConfig, &data_width, &graph_width,
+		&fft_size, &multirx_data_width, &rate, &quisk_mainwin_handle))
 		return NULL;
 
 	Py_INCREF(quisk_pyConfig);
@@ -3784,9 +4356,10 @@ static PyObject * record_app(PyObject * self, PyObject * args)
 		fft_data_array[i].filled = 0;
 		fft_data_array[i].index = 0;
 		fft_data_array[i].block = 0;
-		pt = fft_data_array[i].samples = (fftw_complex *) fftw_malloc(sizeof(fftw_complex) * fft_size);
-		fft_data_array[i].plan = fftw_plan_dft_1d(fft_size, pt, pt, FFTW_FORWARD, FFTW_MEASURE);
+		fft_data_array[i].samples = (fftw_complex *) fftw_malloc(sizeof(fftw_complex) * fft_size);
 	}
+	pt = fft_data_array[0].samples;
+	quisk_fft_plan = fftw_plan_dft_1d(fft_size, pt, pt, FFTW_FORWARD, FFTW_MEASURE);
 	// Create space for the fft average and window
 	if (fft_window)
 		free(fft_window);
@@ -3797,13 +4370,17 @@ static PyObject * record_app(PyObject * self, PyObject * args)
 		else	// Hanning
 			fft_window[i] = 0.5 + 0.5 * cos(2. * M_PI * j / fft_size);
 	}
+	// Initialize plan for multirx FFT
+	multirx_fft_width = multirx_data_width * MULTIRX_FFT_MULT;		// Use larger FFT than graph size
+	multirx_fft_next_samples = (fftw_complex *)malloc(multirx_fft_width * sizeof(fftw_complex));
+	multirx_fft_next_plan = fftw_plan_dft_1d(multirx_fft_width, multirx_fft_next_samples, multirx_fft_next_samples, FFTW_FORWARD, FFTW_MEASURE);
 	if (current_graph)
 		free(current_graph);
 	current_graph = (double *) malloc(sizeof(double) * data_width);
 	measure_freq(NULL, 0, 0);
 	dAutoNotch(NULL, 0, 0, 0);
-	quisk_process_decimate(NULL, 0, 0);
-	quisk_process_demodulate(NULL, NULL, 0, 0);
+	quisk_process_decimate(NULL, 0, 0, 0);
+	quisk_process_demodulate(NULL, NULL, 0, 0, 0, 0);
 	//calc_audio_graph(NULL, 0);
 #if DEBUG_IO
 	QuiskPrintTime(NULL, 0);
@@ -3853,6 +4430,14 @@ static PyObject * set_fdx(PyObject * self, PyObject * args)
 	return Py_None;
 }
 
+static PyObject * set_sample_bytes(PyObject * self, PyObject * args)
+{
+	if (!PyArg_ParseTuple (args, "i", &sample_bytes))
+		return NULL;
+	Py_INCREF (Py_None);
+	return Py_None;
+}
+
 static PyMethodDef QuiskMethods[] = {
 	{"add_tone", add_tone, METH_VARARGS, "Add a test tone to the data."},
 	{"dft", dft, METH_VARARGS, "Calculate the discrete Fourier transform."},
@@ -3860,6 +4445,11 @@ static PyMethodDef QuiskMethods[] = {
 	{"is_key_down", is_key_down, METH_VARARGS, "Check whether the key is down; return 0 or 1."},
 	{"get_state", get_state, METH_VARARGS, "Return a count of read and write errors."},
 	{"get_graph", get_graph, METH_VARARGS, "Return a tuple of graph data."},
+	{"set_multirx_mode", set_multirx_mode, METH_VARARGS, "Select demodulation mode for sub-receivers."},
+	{"set_multirx_freq", set_multirx_freq, METH_VARARGS, "Select how to play audio from sub-receivers."},
+	{"set_multirx_play_method", set_multirx_play_method, METH_VARARGS, "Select how to play audio from sub-receivers."},
+	{"set_multirx_play_channel", set_multirx_play_channel, METH_VARARGS, "Select which sub-receiver to play audio."},
+	{"get_multirx_graph", get_multirx_graph, METH_VARARGS, "Return a tuple of sub-receiver graph data."},
 	{"get_filter", get_filter, METH_VARARGS, "Return the frequency response of the receive filter."},
 	{"get_filter_rate", get_filter_rate, METH_VARARGS, "Return the sample rate used for the filters."},
 	{"get_tx_filter", quisk_get_tx_filter, METH_VARARGS, "Return the frequency response of the transmit filter."},
@@ -3868,8 +4458,13 @@ static PyMethodDef QuiskMethods[] = {
 	{"measure_audio", measure_audio, METH_VARARGS, "Set the method, return the measured audio voltage."},
 	{"get_overrange", get_overrange, METH_VARARGS, "Return the count of overrange (clip) for the ADC."},
 	{"get_smeter", get_smeter, METH_VARARGS, "Return the S meter reading."},
+	{"get_hermes_adc", get_hermes_adc, METH_VARARGS, "Return the ADC peak level."},
+	{"set_hermes_id", set_hermes_id, METH_VARARGS, "Set the Hermes hardware code version and board ID."},
 	{"invert_spectrum", invert_spectrum, METH_VARARGS, "Invert the input RF spectrum"},
 	{"pc_to_hermes", pc_to_hermes, METH_VARARGS, "Send this block of control data to the Hermes device"},
+	{"pc_to_hermeslite_writequeue", pc_to_hermeslite_writequeue, METH_VARARGS, "Fill Hermes-Lite write queue"},	
+	{"set_hermeslite_writepointer", set_hermeslite_writepointer, METH_VARARGS, "Set Hermes-Lite write pointer"},	
+	{"get_hermeslite_writepointer", get_hermeslite_writepointer, METH_VARARGS, "Return Hermes-Lite write pointer"},
 	{"hermes_to_pc", hermes_to_pc, METH_VARARGS, "Get the block of control data from the Hermes device"},
 	{"record_app", record_app, METH_VARARGS, "Save the App instance."},
 	{"record_graph", record_graph, METH_VARARGS, "Record graph parameters."},
@@ -3890,6 +4485,7 @@ static PyMethodDef QuiskMethods[] = {
 	{"set_spot_level", set_spot_level, METH_VARARGS, "Set the spot level, or -1 for no spot"},
 	{"set_imd_level", set_imd_level, METH_VARARGS, "Set the imd level 0 to 1000."},
 	{"set_sidetone", set_sidetone, METH_VARARGS, "Set the sidetone volume and frequency."},
+	{"set_sample_bytes", set_sample_bytes, METH_VARARGS, "Set the number of bytes for each I or Q sample."},
 	{"set_transmit_mode", set_transmit_mode, METH_VARARGS, "Change the radio to transmit mode independent of key_down."},
 	{"set_volume", set_volume, METH_VARARGS, "Set the audio output volume."},
 	{"set_tx_audio", (PyCFunction)quisk_set_tx_audio, METH_VARARGS|METH_KEYWORDS, "Set the transmit audio parameters."},

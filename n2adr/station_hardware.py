@@ -3,10 +3,8 @@
 from __future__ import print_function
 
 import sys, struct, math, socket, select, thread, time, traceback, os
-import cPickle
 import serial
-import _quisk as QS
-import wx
+import wx, wx.lib.buttons
 
 DEBUG = 0
 
@@ -33,6 +31,11 @@ class ControlBox:	# Control my station control box
   def OnButtonPTT(self, event):
     btn = event.GetEventObject()
     if btn.GetValue():		# Turn the software key bit on or off
+      self.want_data = 'C\001'
+    else:
+      self.want_data = 'C\000'
+  def SetKeyDown(self, down):
+    if down:			# Turn the software key bit on or off
       self.want_data = 'C\001'
     else:
       self.want_data = 'C\000'
@@ -92,6 +95,7 @@ class LowPassFilter:	# Control my low pass filter box
       num = 8
     self.want_data =  chr(num)
     self.timer = 0
+    #print ("LP filter band %d" % num)
   def HeartBeat(self):
     global gatewayTime
     if not self.socket:
@@ -239,6 +243,114 @@ class HighPassFilter:	# Control my high pass filter box
       except socket.timeout:
         pass
 
+class FilterBoxV2:	# Control my 2016 high/low pass filter box
+  address = ('192.168.1.194', 0x3A00 + 70)
+  # Low pass filters are numbered 0 thru 5 for bands: 10, 15, 17, 20, 40, 60
+  lpfnum = (5, 5, 5, 5, 5, 5,	# frequency 0 thru 5 MHz
+               4, 4, 3, 3, 3,	# 6 thru 10
+               3, 3, 3, 3, 2,	# 11 thru 15
+               2, 2, 2, 1, 1,	# 16 thru 20
+               1, 0, 0, 0, 0)	# 21 thru 25; otherwise the filter is 1
+  # High pass filters are numbered 0 thru 2 with cutoff 12.5 MHz, 4.2 MHz, short
+  hpfnum = (2, 2, 2, 2, 2, 1,	# frequency 0 thru 5 MHz
+               1, 1, 1, 1, 1,	# 6 thru 10
+               1, 1, 0, 0, 0,	# 11 thru 15
+               0, 0, 0, 0, 0,	# 16 thru 20
+               0, 0, 0, 0, 0)	# 21 thru 25; otherwise the filter is 1
+  def __init__(self, app, conf):
+    self.application = app	# Application instance (to provide attributes)
+    self.conf = conf		# Config file module
+    self.preamp = 0
+    self.have_data = None
+    self.want_data = chr(0) * 2
+    self.old_tx_freq = 0
+    self.timer = 0
+    self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    self.socket.setblocking(0)
+    self.socket.connect(self.address)
+  def ChangeBand(self, band):
+    pass
+  def DefaultPreamp(self, freq):
+    preamp = 0
+    if self.conf.use_rx_udp:
+      btn = self.application.BtnRfGain
+      if btn:
+        if freq < 5000000:
+          btn.SetLabel('RF 0 dB', False)
+        elif freq < 13000000:
+          btn.SetLabel('RF 0 dB', False)
+        else:
+          btn.SetLabel('RF +16', False)
+          preamp = 1
+    return preamp
+  def OnButtonRfGain(self, event):
+    btn = event.GetEventObject()
+    n = btn.index
+    if n == 0:		# 0dB
+      self.preamp = 0
+      self.application.Hardware.rf_gain = 0
+    elif n == 1:	# +16
+      self.preamp = 1
+      self.application.Hardware.rf_gain = 16
+    else:
+      print ('Unknown RfGain')
+      self.preamp = 0
+      self.application.Hardware.rf_gain = 0
+    #print ('Gain', self.preamp, self.application.Hardware.rf_gain)
+    self.SetTxFreq(None)
+  def SetPreamp(self, preamp):
+    if preamp:
+      self.preamp = 1
+    else:
+      self.preamp = 0
+    self.SetTxFreq(None)
+  def SetTxFreq(self, tx_freq):
+    if tx_freq is None:
+      tx_freq = self.old_tx_freq
+    elif abs(self.old_tx_freq - tx_freq) < 100000:
+      return	# Ignore small tuning changes
+    if abs(self.old_tx_freq - tx_freq) > 1000000:
+      self.preamp = self.DefaultPreamp(tx_freq)
+    self.old_tx_freq = tx_freq
+    try:		# Look up low pass filter number based on MHz
+      lpf = self.lpfnum[tx_freq // 1000000]
+    except IndexError:
+      lpf = 0
+    try:		# Look up high pass filter number based on MHz
+      hpf = self.hpfnum[tx_freq // 1000000]
+    except IndexError:
+      hpf = 0
+    #print ("V2 filter LPF %d HPF %d" % (lpf, hpf))
+    lpf = 1 << lpf
+    hpf = 1 << hpf
+    if self.preamp:
+      hpf |= 0b10000000
+    self.want_data =  chr(lpf) + chr(hpf)
+    self.timer = 0
+  def HeartBeat(self):
+    global gatewayTime
+    if not self.socket:
+      return
+    try:	# The V2 filter box echoes its commands
+      self.have_data = self.socket.recv(50)
+    except socket.error:
+      pass
+    except socket.timeout:
+      pass
+    if self.have_data != self.want_data and time.time() - gatewayTime > gatewayLimit:
+      gatewayTime = time.time()
+      if self.timer <= 10:
+        self.timer += 1
+        if self.timer == 10:
+          print ('V2 filter box error')
+      try:
+        self.socket.send(self.want_data)
+        #print ('V2 filter box send data 0x%X 0x%X' % (ord(self.want_data[0]), ord(self.want_data[1])))
+      except socket.error:
+        pass
+      except socket.timeout:
+        pass
+
 class AntennaControl:	# Control my KI8BV dipole
   AntCtrlAddress = ('192.168.1.194', 0x3A00 + 33)
   def __init__(self, app, conf):
@@ -276,7 +388,7 @@ class AntennaControl:	# Control my KI8BV dipole
         self.timer = 0
       try:
         self.socket.send(self.want_data)
-        # print ("Change dipole to ord %d" % ord(self.want_data))
+        #print ("Change dipole to ord %d" % ord(self.want_data))
       except socket.error:
         pass
       except socket.timeout:
@@ -288,32 +400,37 @@ class AntennaTuner:     # Control my homebrew antenna tuner and my KI8BV dipole
     self.application = app	# Application instance (to provide attributes)
     self.conf = conf		# Config file module
     self.socket = None
-    self.GUI = None         # Control window
     self.have_data = chr(255) * 3
     self.tx_freq = 0
     self.tune_freq = 0		# Frequency we last tuned
-    self.disable_freq_control = False
     self.timer = 0
     self.set_L = 0
     self.set_C = 0
     self.set_HighZ = 0
     self.antnum = 0				# Antenna number 0 or 1
-    self.fix_antnum = False		# Fix the antenna number
     self.dipole2 = AntennaControl(app, conf)	# Control the KI8BV dipole
     if sys.platform == "win32":
-      path = 'C:/pub/TunerLCZ.pkl'
+      path = 'C:/pub/TunerLCZ.txt'
     else:
-      path = '/home/jim/pub/TunerLCZ.pkl'
-    try:
-      fp = open(path, "r")
-      self.TunerLC = cPickle.load(fp)
-      fp.close()
-    except IOError:
-      self.TunerLC = {}
-    if hasattr(self.application, 'is_vna_program'):
-      self.is_vna = True
-    else:
-      self.is_vna = False
+      path = '/home/jim/pub/TunerLCZ.txt'
+    fp = open(path, "r")
+    lines = fp.readlines()
+    fp.close()
+    lst = []
+    for line in lines:
+      freq, antL, antC, hilo = line.split()
+      freq = int(freq)
+      antL = int(antL)
+      antC = int(antC)
+      hilo = int(hilo)
+      lst.append((freq, antL, antC, hilo))
+    lst.sort()
+    self.TunerLC = {}
+    for i in range(41):
+      self.TunerLC[i] = []
+    for data in lst:
+      mhz = data[0] // 1000000
+      self.TunerLC[mhz].append(data)
     self.WantData()
   def WantData(self):
     if self.set_HighZ:
@@ -323,24 +440,10 @@ class AntennaTuner:     # Control my homebrew antenna tuner and my KI8BV dipole
     if self.antnum:
       flags |= 0x04
     self.want_data = chr(self.set_C) + chr(self.set_L) + chr(flags)
-    if self.set_HighZ:
-      hilo = 'HiZ'
-    else:
-      hilo = 'LoZ'
-    text = "L %3d,    C %3d,    %s,    Antenna %d" % (self.set_L, self.set_C, hilo, self.antnum)
-    if self.GUI:
-      self.GUI.sliderL.SetValue(self.set_L)
-      self.GUI.sliderC.SetValue(self.set_C)
-      self.GUI.UpdateText(text)
-    elif self.application.bottom_widgets:
-      self.application.bottom_widgets.UpdateText(text)
   def open(self):
     self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     self.socket.setblocking(0)
     self.socket.connect(self.address)
-    if self.is_vna:
-      self.GUI = AntTunerGUI(self, self.application, self.conf)
-      self.GUI.Show()
   def close(self):
     pass
   def OnSpot(self, level):
@@ -348,45 +451,39 @@ class AntennaTuner:     # Control my homebrew antenna tuner and my KI8BV dipole
     pass
   def ChangeBand(self, band):
     pass
-  def SetTxFreq(self, tx_freq):
+  def SetTxFreq(self, tx_freq, no_tune=False):
     self.tx_freq = tx_freq
     if tx_freq is None:
       return
-    if not self.fix_antnum:
-      if tx_freq < 17000000:
-        self.antnum = 0
-      else:
-        self.antnum = 1
+    if tx_freq < 17000000:
+      self.antnum = 0
+    else:
+      self.antnum = 1
     if self.antnum == 1:
       self.dipole2.SetTxFreq(tx_freq)
     if not self.socket:
       return
-    if self.disable_freq_control:
+    if no_tune:		# Change dipole but don't tune the antenna tuner
       return
-    freq = (tx_freq + 5000) // 10000 * 10000		# rounded frequency
+    if abs(self.tune_freq - tx_freq) < 5000:		# ignore small changes
+      return
+    self.tune_freq = tx_freq
+    mhz = tx_freq // 1000000
     try:
-      newL, newC, newH = self.TunerLC[freq]
+      lst = self.TunerLC[mhz - 1] + self.TunerLC[mhz]
     except KeyError:
       newL, newC, newH = (0, 0, 0)
+    else:
+      for freq, newL, newC, newH in lst:
+        if freq >= tx_freq:
+          break
+      else:
+        newL, newC, newH = (0, 0, 0)
     if newH != self.set_HighZ or self.set_C != newC or self.set_L != newL:
-      # if not VNA, ignore small changes in frequency
-      if self.is_vna or abs(self.tune_freq - tx_freq) > 5000:
-        self.tune_freq = tx_freq
-        self.set_HighZ = newH
-        self.set_C = newC
-        self.set_L = newL
-        self.WantData()
-  def OnAntTuner(self, text):	# One of the tuner buttons was pressed
-    if text == 'Antenna':
-      self.fix_antnum = False
-    elif text == 'Ant 0':
-      self.fix_antnum = True
-      self.antnum = 0
-    elif text == 'Ant 1':
-      self.fix_antnum = True
-      self.antnum = 1
-    self.SetTxFreq(self.tx_freq)
-    self.WantData()
+      self.set_HighZ = newH
+      self.set_C = newC
+      self.set_L = newL
+      self.WantData()
   def HeartBeat(self):
     global gatewayTime
     if not self.socket:
@@ -407,8 +504,6 @@ class AntennaTuner:     # Control my homebrew antenna tuner and my KI8BV dipole
     else:
       self.timer = 0
     self.dipole2.HeartBeat()
-    if self.GUI:
-      self.GUI.HeartBeat()
   def Send(self):
     try:
       self.socket.send(self.want_data)
@@ -417,164 +512,136 @@ class AntennaTuner:     # Control my homebrew antenna tuner and my KI8BV dipole
     except socket.timeout:
       pass
 
-class AntTunerGUI(wx.Frame):    # Display a control window for my antenna tuner
-  def __init__(self, anttuner, app, conf):
-    wx.Frame.__init__(self, app.main_frame, title="Antenna Tuner Control",
-       style=wx.STAY_ON_TOP|wx.CAPTION)
-    self.anttuner = anttuner
+class StationControlGUI(wx.Frame):    # Display a control window for my antenna tuner
+  def __init__(self, parent, hware, app, conf):
+    wx.Frame.__init__(self, parent=parent, title="Station Control",
+       style=wx.CAPTION|wx.CLOSE_BOX)
+    self.hware = hware
     self.application = app
+    self.conf = conf
     self.data_saving = False
-    self.SetBackgroundColour('white')
+    if sys.platform == "win32":
+      self.filename = 'C:/pub/TunerLCZ.tmp'
+    else:
+      self.filename = '/home/jim/pub/TunerLCZ.tmp'
+    self.SetBackgroundColour('light steel blue')
     sizer = wx.GridBagSizer(hgap=5, vgap=3)
     font = wx.Font(12, wx.FONTFAMILY_SWISS, wx.NORMAL, wx.FONTWEIGHT_NORMAL, face=conf.quisk_typeface)
-    is_vna = anttuner.is_vna
-    b = wx.StaticText(self, -1, "Adjust L", style=wx.ALIGN_CENTER)
+    row = 0
+    szr = wx.BoxSizer(wx.HORIZONTAL)
+    self.bands = []
+    for band in ('160', '80', '60', '40', '30', '20', '17', '15', '12', '10'):
+      b = wx.lib.buttons.GenToggleButton(self, -1, band)
+      b.SetUseFocusIndicator(False)
+      b.SetBezelWidth(4)
+      self.bands.append(b)
+      szr.Add(b)
+      self.Bind(wx.EVT_BUTTON, self.OnBtnBand, b)
+    sizer.Add(szr, pos=(row, 0), span=(1, 3), flag=wx.ALIGN_CENTER_VERTICAL|wx.LEFT|wx.RIGHT|wx.TOP, border=20)
+    row = 1
+    b = wx.StaticText(self, -1, "    Tuner Adjust L   ", style=wx.ALIGN_CENTER)
     b.SetFont(font)
-    sizer.Add(b, pos=(0, 0))
+    sizer.Add(b, pos=(row, 0), flag=wx.ALIGN_CENTER_VERTICAL)
     b = self.sliderL = wx.Slider(self, -1, 0, 0, 255, size=(700, -1), style=wx.SL_HORIZONTAL|wx.SL_LABELS)
-    b.Enable(is_vna)
     b.Bind(wx.EVT_SCROLL, self.OnSliderL)
-    sizer.Add(b, pos=(0,1))
-    b = wx.Button(self, -1, "HiLo")
+    sizer.Add(b, pos=(row,1))
+    b = self.btnHiLo = wx.lib.buttons.GenToggleButton(self, -1, "HiLo")
+    b.SetUseFocusIndicator(False)
+    b.SetBezelWidth(4)
     b.SetFont(font)
-    b.Enable(is_vna)
     self.Bind(wx.EVT_BUTTON, self.OnButtonHiLo, b)
-    sizer.Add(b, pos=(0,2))
-    b = wx.StaticText(self, -1, "Adjust C")
+    sizer.Add(b, pos=(row,2), flag=wx.ALIGN_CENTER_VERTICAL|wx.LEFT|wx.RIGHT, border=20)
+    row = 2
+    b = wx.StaticText(self, -1, "    Tuner Adjust C   ")
     b.SetFont(font)
-    sizer.Add(b, pos=(1, 0))
+    sizer.Add(b, pos=(row, 0), flag=wx.ALIGN_CENTER_VERTICAL)
     b = self.sliderC = wx.Slider(self, -1, 0, 0, 255, size=(700, -1), style=wx.SL_HORIZONTAL|wx.SL_LABELS)
-    b.Enable(is_vna)
     b.Bind(wx.EVT_SCROLL, self.OnSliderC)
-    sizer.Add(b, pos=(1,1))
-    b = wx.Button(self, -1, "Save")
+    sizer.Add(b, pos=(row,1), flag=wx.ALIGN_CENTER_VERTICAL)
+    b = wx.lib.buttons.GenButton(self, -1, "Save")
+    b.SetUseFocusIndicator(False)
+    b.SetBezelWidth(4)
     b.SetFont(font)
-    b.Enable(is_vna)
     self.Bind(wx.EVT_BUTTON, self.OnButtonSave, b)
-    sizer.Add(b, pos=(1,2))
-    b = wx.StaticText(self, -1, "Status", style=wx.ALIGN_CENTER)
+    sizer.Add(b, pos=(row,2), flag=wx.ALIGN_CENTER_VERTICAL|wx.LEFT|wx.RIGHT, border=20)
+    row = 3
+    szr = wx.BoxSizer(wx.HORIZONTAL)
+    szr.AddSpacer(20)
+    b = wx.lib.buttons.GenToggleButton(self, -1, "Key Down")
     b.SetFont(font)
-    sizer.Add(b, pos=(3, 0))
-    self.status = b = wx.StaticText(self, -1, "Ready", style=wx.ST_NO_AUTORESIZE)
+    b.SetUseFocusIndicator(False)
+    b.SetBezelWidth(4)
+    self.Bind(wx.EVT_BUTTON, self.OnBtnKey, b)
+    szr.Add(b)
+    szr.AddSpacer(10)
+    b = wx.lib.buttons.GenToggleButton(self, -1, "FilterV2 Preamp")
     b.SetFont(font)
-    sizer.Add(b, pos=(3, 1), flag=wx.EXPAND)
-    b = wx.ToggleButton(self, -1, "Disable")
-    b.SetFont(font)
-    b.Enable(is_vna)
-    self.Bind(wx.EVT_TOGGLEBUTTON, self.OnBtnDisable, b)
-    sizer.Add(b, pos=(3, 2))
+    b.SetUseFocusIndicator(False)
+    b.SetBezelWidth(4)
+    self.Bind(wx.EVT_BUTTON, self.OnBtnV2Preamp, b)
+    szr.Add(b)
+    sizer.Add(szr, pos=(row, 0), span=(1, 3))
     self.SetSizer(sizer)
     self.Fit()
+    w, h = self.GetSizeTuple()
+    self.SetSize((w, h + 20))
+    self.Bind(wx.EVT_CLOSE, self.OnBtnClose)
+    if parent is None:	# Start a HeartBeat if the parent does not provide one
+      self.timer = wx.Timer(self)
+      self.Bind(wx.EVT_TIMER, self.HeartBeat)
+      self.timer.Start(100)
+  def SetTxFreq(self, tx_freq):
+    pass
+  def OnBtnClose(self, event):
+    self.hware.anttuner.close()
+    self.hware.controlbox.close()
+    self.Destroy()
+  def HeartBeat(self, event):
+    self.hware.anttuner.HeartBeat()
+    self.hware.controlbox.HeartBeat()
+    self.hware.v2filter.HeartBeat()
+  def Open(self):	# Initialize the hardware
+    self.bands[0].SetToggle(True)	# 160 meters
+    self.hware.anttuner.open()
+    self.hware.v2filter.SetTxFreq(1900000)	# Start 160 meters
+  def OnBtnBand(self, event):
+    btn = event.GetEventObject()
+    for band in self.bands:
+      if band == btn:
+        band.SetToggle(True)
+      else:
+        band.SetToggle(False)
+    band = btn.GetLabel()
+    f1, f2 = self.conf.BandEdge[band]
+    f = (f1 + f2) / 2
+    self.hware.v2filter.SetTxFreq(f)
+    self.hware.anttuner.SetTxFreq(f, no_tune=True)
   def OnButtonHiLo(self, event):
-    anttuner = self.anttuner
-    if anttuner.set_HighZ:
-      anttuner.set_HighZ = 0
-    else:
+    anttuner = self.hware.anttuner
+    if self.btnHiLo.GetValue():
       anttuner.set_HighZ = 1
+    else:
+      anttuner.set_HighZ = 0
     anttuner.WantData()
   def OnButtonSave(self, event):
-    self.data = []
-    self.data.append(tuple(self.application.graph.data_freq))
-    self.data_lcz = []
-    self.data_avg_freq = (self.application.graph.data_freq[0] + self.application.graph.data_freq[-1]) / 2
-    self.data_avg_freq = f = (self.data_avg_freq + 500000) / 1000000		# frequency rounded to megahertz
-    if f == 5:		# try to limit the number of L/C combinations
-      for HighZ in (0, ):
-        for L in range(0, 4):
-          for C in range(0, 61):
-            self.data_lcz.append((L, C, HighZ))
-    elif f == 7:
-      for HighZ in (0, ):
-        for L in range(0, 21):
-          for C in range(0, 91):
-            self.data_lcz.append((L, C, HighZ))
-    elif f == 10:
-      for HighZ in (0, ):
-        for L in range(0, 8):
-          for C in range(0, 91):
-            self.data_lcz.append((L, C, HighZ))
-    elif f == 14:
-      for HighZ in (0, ):
-        for L in range(0, 11):
-          for C in range(0, 21):
-            self.data_lcz.append((L, C, HighZ))
-    elif f == 18:
-      for HighZ in (0, ):
-        for L in range(0, 11):
-          for C in range(0, 11):
-            self.data_lcz.append((L, C, HighZ))
-    elif f == 21:
-      for HighZ in (0, ):
-        for L in range(0, 11):
-          for C in range(0, 11):
-            self.data_lcz.append((L, C, HighZ))
-    elif f == 25:
-      for HighZ in (0, 1):
-        for L in range(0, 11):
-          for C in range(0, 11):
-            self.data_lcz.append((L, C, HighZ))
-    elif 28 <= f <= 30:
-      for HighZ in (0, 1):
-        for L in range(0, 11):
-          for C in range(0, 15):
-            self.data_lcz.append((L, C, HighZ))
-    anttuner = self.anttuner
-    anttuner.set_L, anttuner.set_C, anttuner.set_HighZ = self.data_lcz[0]
-    del self.data_lcz[0]
-    anttuner.WantData()
-    self.data_saving = True
-    self.data_count = 0
-  def OnButtonSaveJIM(self, event):
-    anttuner = self.anttuner
-    freq = anttuner.tx_freq
-    freq = (freq + 5000) / 10000 * 10000      # round
-    LC = anttuner.TunerLC[anttuner.antnum]
-    for i in range(len(LC)):	# Record new freq and L/C
-      if abs(LC[i][0] - freq) < 1000:
-        LC[i] = (freq, anttuner.set_L, anttuner.set_C, anttuner.set_HighZ)
-        break
+    if self.btnHiLo.GetValue():
+      hilo = 1
     else:
-      LC.append((freq, anttuner.set_L, anttuner.set_C, anttuner.set_HighZ))
-      LC.sort()
-    self.WriteFile()
-  def UpdateText(self, text):
-    self.status.SetLabel(text)
-  def OnSliderL(self, event):
-    self.anttuner.set_L = event.GetEventObject().GetValue()
-    self.anttuner.WantData()
-  def OnSliderC(self, event):
-    self.anttuner.set_C = event.GetEventObject().GetValue()
-    self.anttuner.WantData()
-  def OnBtnDisable(self, event):
-    self.anttuner.disable_freq_control = event.GetEventObject().GetValue()
-  def WriteFile(self):
-    anttuner = self.anttuner
-    fp = open(anttuner.TunerLC_fname, 'w')
-    for i in (0, 1):          # antenna number
-      lst = anttuner.TunerLC[i]   # freq, L, C, IsHi for each antenna
-      for f, l, c, ishi in  lst:
-        fp.write("%d %9d %4d %4d  %1d\n" % (i, f, l, c, ishi))
+      hilo = 0
+    t = "%10d %3d %3d %d\n" % (self.application.frequency, self.sliderL.GetValue(), self.sliderC.GetValue(), hilo)
+    fp = open(self.filename, 'a')
+    fp.write(t)
     fp.close()
-  def HeartBeat(self):
-    gr = self.application.graph
-    if self.data_saving:
-      anttuner = self.anttuner
-      if anttuner.have_data == anttuner.want_data:
-        self.data_count += 1
-        if self.data_count > 4:
-          self.data_count = 0
-          self.data.append(((anttuner.set_L, anttuner.set_C, anttuner.set_HighZ), tuple(self.application.graph.data_mag)))
-          #print ('record 500', (anttuner.set_L, anttuner.set_C, anttuner.set_HighZ), self.application.graph.data_mag[500])
-          if self.data_lcz:
-            anttuner.set_L, anttuner.set_C, anttuner.set_HighZ = self.data_lcz[0]
-            #print (self.data_lcz[0])
-            del self.data_lcz[0]
-            anttuner.WantData()
-          else:
-            self.data_saving = False
-            fp = open("/home/jim/pub/Tuner/data%2d.pkl" % self.data_avg_freq, "w")
-            cPickle.dump(self.data, fp)
-            fp.close()
+  def OnSliderL(self, event):
+    self.hware.anttuner.set_L = event.GetEventObject().GetValue()
+    self.hware.anttuner.WantData()
+  def OnSliderC(self, event):
+    self.hware.anttuner.set_C = event.GetEventObject().GetValue()
+    self.hware.anttuner.WantData()
+  def OnBtnV2Preamp(self, event):
+    self.hware.v2filter.SetPreamp(event.GetEventObject().GetValue())
+  def OnBtnKey(self, event):
+    self.hware.controlbox.SetKeyDown(event.GetEventObject().GetValue())
 
 class AT200PC:		# Control an AT-200PC autotuner made by LDG
   def __init__(self, app, conf):
@@ -862,3 +929,22 @@ class AT200PC:		# Control an AT-200PC autotuner made by LDG
         self.set_C += 1
       elif text == 'C-':
         self.set_C -= 1
+
+class App(wx.App):
+  def OnInit(self):
+    if sys.path[0] != "'.'":		# Make sure the current working directory is on path
+      sys.path.insert(0, '.')
+    self.frequency = 0
+    import quisk_conf_defaults as conf
+    import quisk_hardware_model as hardware
+    self.bottom_widgets = None
+    hardware.anttuner = AntennaTuner(self, conf)	# Control the antenna tuner
+    hardware.v2filter = FilterBoxV2(self, conf)	# Control V2 filter box
+    hardware.controlbox = ControlBox(self, conf)	# Control my Station Control Box
+    self.main_frame = frame = StationControlGUI (None, hardware, self, conf)
+    frame.Open()
+    frame.Show()
+    return True
+
+if __name__ == '__main__':
+  App().MainLoop()

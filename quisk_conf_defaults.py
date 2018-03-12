@@ -45,10 +45,12 @@ quisk_widgets = None
 
 
 ################ Receivers SoftRock USB, Devices controlled by USB that capture samples from a sound card, and (for Tx) play samples to a sound card
-## hardware_file_name		Hardware file name, rfile
+## hardware_file_name		Hardware file path, rfile
+# This is the file that contains the control logic for each radio.
 #hardware_file_name = 'softrock/hardware_usb.py'
 
-## widgets_file_name			Widget file name, rfile
+## widgets_file_name			Widget file path, rfile
+# This optional file adds additional controls for the radio.
 #widgets_file_name = 'softrock/widgets_tx.py'
 
 use_sdriq = 0						# Get ADC samples from SDR-IQ is not used
@@ -140,10 +142,12 @@ bandAmplPhase = {}				# Empty dictionary to start
 
 
 ################ Receivers SoftRock Fixed, Fixed frequency devices that capture samples from a sound card, and (for Tx) play samples to a sound card
-## hardware_file_name		Hardware file name, rfile
+## hardware_file_name		Hardware file path, rfile
+# This is the file that contains the control logic for each radio.
 #hardware_file_name = 'quisk_hardware_fixed.py'
 
-## widgets_file_name			Widget file name, rfile
+## widgets_file_name			Widget file path, rfile
+# This optional file adds additional controls for the radio.
 #widgets_file_name = ''
 
 ## fixed_vfo_freq			Fixed VFO frequency, integer
@@ -182,10 +186,12 @@ bandAmplPhase = {}				# Empty dictionary to start
 
 
 ################ Receivers HiQSDR, The original N2ADR hardware and the improved HiQSDR using UDP
-## hardware_file_name		Hardware file name, rfile
+## hardware_file_name		Hardware file path, rfile
+# This is the file that contains the control logic for each radio.
 #hardware_file_name = 'hiqsdr/quisk_hardware.py'
 
-## widgets_file_name			Widget file name, rfile
+## widgets_file_name			Widget file path, rfile
+# This optional file adds additional controls for the radio.
 #widgets_file_name = ''
 
 # For the N2ADR 2010 transceiver described in QEX, and for the improved version HiQSDR,
@@ -228,18 +234,26 @@ cw_delay = 0
 rx_udp_ip = "192.168.2.196"
 #rx_udp_ip = "192.168.1.196"
 
-# Microphone samples sent to UDP:
-tx_ip = ""				# Transmit IP address for mic sent to UDP (or "192.168.2.195")
-
-tx_audio_port = 0			# UDP port for mic samples (or 0x553B)
-
 ## rx_udp_port				Hardware UDP port, integer
-# This is the UDP port number of your hardware.
+# This is the base UDP port number of your hardware.
 rx_udp_port = 0xBC77
 
 ## rx_udp_ip_netmask		Network netmask, text
 # This is the netmask for the network.
 rx_udp_ip_netmask = '255.255.255.0'
+
+## tx_ip					Transmit IP, text
+# Leave this blank to use the same IP address as the receive hardware.  Otherwise, enter "disable"
+# to disable sending transmit I/Q samples, or enter the actual IP address.  You must enter "disable"
+# if you have multiple hardwares on the network, and only one should transmit.
+tx_ip = ""
+#tx_ip = "disable"
+#tx_ip = "192.168.1.201"
+
+## tx_audio_port			Tx audio UDP port, integer
+# This is the UDP port for transmit audio I/Q samples.  Enter zero to calculate this from the
+# base hardware port.  Otherwise enter the special custom port.
+tx_audio_port = 0
 
 ## rx_udp_clock				Clock frequency Hertz, integer
 # This is the clock frequency of the hardware in Hertz.
@@ -257,10 +271,12 @@ sndp_active = True
 
 
 ################ Receivers Hermes, The Hermes-Lite Project and possibly other hardware with the Hermes FPGA code.
-## hardware_file_name		Hardware file name, rfile
+## hardware_file_name		Hardware file path, rfile
+# This is the file that contains the control logic for each radio.
 #hardware_file_name = 'hermes/quisk_hardware.py'
 
-## widgets_file_name			Widget file name, rfile
+## widgets_file_name			Widget file path, rfile
+# This optional file adds additional controls for the radio.
 #widgets_file_name = 'hermes/quisk_widgets.py'
 
 # Quisk has support for the Hermes-Lite project.  This support will be extended to the original Hermes.
@@ -288,18 +304,30 @@ sndp_active = True
 # This is the netmask for the network.
 #rx_udp_ip_netmask = '255.255.255.0'
 
+## tx_ip					Transmit IP, text
+# Leave this blank to use the same IP address as the receive hardware.  Otherwise, enter "disable"
+# to disable sending transmit I/Q samples, or enter the actual IP address.  You must enter "disable"
+# if you have multiple hardwares on the network, and only one should transmit.
+tx_ip = ""
+#tx_ip = "disable"
+#tx_ip = "192.168.1.201"
+
+## tx_audio_port			Tx audio UDP port, integer
+# This is the UDP port for transmit audio I/Q samples.  Enter zero to calculate this from the
+# base hardware port.  Otherwise enter the special custom port.
+tx_audio_port = 0
+
 ## rx_udp_clock				Clock frequency Hertz, integer
-# This is the clock frequency of the hardware in Hertz.
+# This is the clock frequency of the hardware in Hertz.  For HermesLite ver2 use 76800000.
 #rx_udp_clock = 73728000
 #rx_udp_clock = 61440000
-#rx_udp_clock = 79872000
-#rx_udp_clock = 80000000
+#rx_udp_clock = 76800000
 
 ## tx_level		Tx Level, dict
 # tx_level sets the transmit level 0 to 255 for each band.  The None band is the default.
 # The config screen has a slider 0 to 100% so you can reduce the transmit power.  The sliders
 # only appear if your hardware defines the method SetTxLevel().  The hardware only supports a
-# power adjustment range of 20 dB, so zero is still a small amount of power.
+# limited adjustment range, so zero is still a small amount of power.
 tx_level = {
 	None:120, '60':110}
 
@@ -319,20 +347,54 @@ hermes_code_version = -1
 # hermes devices, you can use this to specify a unique device.  Or use -1 to accept any board.
 hermes_board_id = -1
 
+## hermes_LNA_dB			Initial LNA dB, integer
+# The initial value for the low noise Rx amplifier gain in dB.
+hermes_LNA_dB = 20
+
+## hermes_lowpwr_tr_enable		Disable T/R in low power, boolean
+# This option only applies to the Hermes Lite 2.
+# Normally, the T/R relay and external PTT output switch on and off when keying the transmitter.
+# But if you set this option, and if you are in low power mode (final amp off) then the T/R relay
+# remains in receive mode.  This is useful for VNA operation as you can use the low power Tx output
+# as the generator and the normal connector as the detector.
+# Changes are immediate (no need to restart).
+hermes_lowpwr_tr_enable = False
+#hermes_lowpwr_tr_enable = True
+
+## hermes_bias_adjust			Enable bias adjust, boolean
+# This option only applies to the Hermes Lite 2.
+# Below are controls that adjust the bias on the power output transistors.  Before you enable adjustment,
+# make sure you know the correct drain current and how to monitor the current.
+# Then set this to True.  When you are finished, set it back to False.  The bias adjustment
+# is stored in the hardware only when the "Write" button is pressed.
+# Changes are immediate (no need to restart).
+hermes_bias_adjust = False
+#hermes_bias_adjust = True
+
+## hermes_power_amp			Enable power amp, boolean
+# This option only applies to the Hermes Lite 2.
+# When True, the power amp is turned on.  Otherwise, the low power output is used.
+# Changes are immediate (no need to restart).
+hermes_power_amp = False
+#hermes_power_amp = True
+
 ## Hermes_BandDict		Hermes Bus, dict
-# The Hermes_BandDict sets the 7 bits on the J16 connector.  The default is 0x00.
+# The Hermes_BandDict sets the 7 bits on the J16 connector.
 Hermes_BandDict = {
 	'160':0b0000001, '80':0b0000010, '60':0b0000100, '40':0b0001000, '30':0b0010000, '20':0b0100000, '15':0b1000000}
+#Hermes_BandDict = { '160':15, '80':7, '60':11, '40':3, '30':13, '20':5, '17':9, '15':1, '12':14, '10':14, '6':6 }
 
 
 
 
 
 ################ Receivers Red Pitaya, The Red Pitaya Project by Pavel Demin.  This uses the Hermes FPGA code.
-## hardware_file_name		Hardware file name, rfile
+## hardware_file_name		Hardware file path, rfile
+# This is the file that contains the control logic for each radio.
 #hardware_file_name = 'hermes/quisk_hardware.py'
 
-## widgets_file_name			Widget file name, rfile
+## widgets_file_name			Widget file path, rfile
+# This optional file adds additional controls for the radio.
 #widgets_file_name = ''
 
 ## use_rx_udp			Hardware type, integer choice
@@ -353,6 +415,19 @@ Hermes_BandDict = {
 # This is the netmask for the network.
 #rx_udp_ip_netmask = '255.255.255.0'
 
+## tx_ip					Transmit IP, text
+# Leave this blank to use the same IP address as the receive hardware.  Otherwise, enter "disable"
+# to disable sending transmit I/Q samples, or enter the actual IP address.  You must enter "disable"
+# if you have multiple hardwares on the network, and only one should transmit.
+tx_ip = ""
+#tx_ip = "disable"
+#tx_ip = "192.168.1.201"
+
+## tx_audio_port			Tx audio UDP port, integer
+# This is the UDP port for transmit audio I/Q samples.  Enter zero to calculate this from the
+# base hardware port.  Otherwise enter the special custom port.
+tx_audio_port = 0
+
 ## rx_udp_clock				Clock frequency Hertz, integer
 # This is the clock frequency of the hardware in Hertz.
 #rx_udp_clock = 125000000
@@ -370,10 +445,12 @@ hermes_board_id = -1
 
 
 ################ Receivers SdrIQ, The SDR-IQ receiver by RfSpace
-## hardware_file_name		Hardware file name, rfile
+## hardware_file_name		Hardware file path, rfile
+# This is the file that contains the control logic for each radio.
 #hardware_file_name = 'sdriqpkg/quisk_hardware.py'
 
-## widgets_file_name			Widget file name, rfile
+## widgets_file_name			Widget file path, rfile
+# This optional file adds additional controls for the radio.
 #widgets_file_name = ''
 
 #
@@ -405,10 +482,12 @@ hermes_board_id = -1
 
 
 ################ Receivers Odyssey,   The Odyssey project using a UDP protocol similar to the HiQSDR
-## hardware_file_name		Hardware file name, rfile
+## hardware_file_name		Hardware file path, rfile
+# This is the file that contains the control logic for each radio.
 #hardware_file_name = 'hiqsdr/quisk_hardware.py'
 
-## widgets_file_name			Widget file name, rfile
+## widgets_file_name			Widget file path, rfile
+# This optional file adds additional controls for the radio.
 #widgets_file_name = ''
 
 ## use_rx_udp			Hardware type, integer choice
@@ -452,6 +531,19 @@ rx_udp_port = 48247
 ## rx_udp_ip_netmask		Network netmask, text
 # This is the netmask for the network.
 rx_udp_ip_netmask = '255.255.255.0'
+
+## tx_ip					Transmit IP, text
+# Leave this blank to use the same IP address as the receive hardware.  Otherwise, enter "disable"
+# to disable sending transmit I/Q samples, or enter the actual IP address.  You must enter "disable"
+# if you have multiple hardwares on the network, and only one should transmit.
+tx_ip = ""
+#tx_ip = "disable"
+#tx_ip = "192.168.1.201"
+
+## tx_audio_port			Tx audio UDP port, integer
+# This is the UDP port for transmit audio I/Q samples.  Enter zero to calculate this from the
+# base hardware port.  Otherwise enter the special custom port.
+tx_audio_port = 0
 
 ## rx_udp_clock				Clock frequency Hertz, integer
 # This is the clock frequency of the hardware in Hertz.
@@ -502,7 +594,90 @@ sndp_active = True
 #radio_sound_mic_boost = True
 
 
-################ Sound Devices.  Quisk recognizes seven sound capture and playback devices.
+################ Receivers Odyssey2,   The Odyssey-2 project using the HPSDR Hermes protocol
+## hardware_file_name		Hardware file path, rfile
+# This is the file that contains the control logic for each radio.
+#hardware_file_name = 'hermes/quisk_hardware.py'
+
+## widgets_file_name			Widget file path, rfile
+# This optional file adds additional controls for the radio.
+#widgets_file_name = 'hermes/quisk_widgets.py'
+
+# Use the file hermes/quisk_conf.py as a model config file.  The Hermes can obtain its IP address from
+# DHCP.  Set rx_udp_ip to the null string in this case.  Or use rx_udp_ip to specify an IP address, but
+# be sure it is unique and not in use by a DHCP server.
+# You can set these options:
+
+## use_rx_udp			Hardware type, integer choice
+# This is the type of UDP hardware.  Use 10 for the Hermes protocol.
+#use_rx_udp = 10
+
+## rx_udp_ip				IP address, text
+# This is the IP address of your hardware.  Or enter nothing to use DHCP.
+#rx_udp_ip = ""
+#rx_udp_ip = "192.168.1.196"
+#rx_udp_ip = "192.168.2.196"
+
+## rx_udp_port				Hardware UDP port, integer
+# This is the UDP port number of your hardware.
+#rx_udp_port = 1024
+
+## rx_udp_ip_netmask		Network netmask, text
+# This is the netmask for the network.
+#rx_udp_ip_netmask = '255.255.255.0'
+
+## tx_ip					Transmit IP, text
+# Leave this blank to use the same IP address as the receive hardware.  Otherwise, enter "disable"
+# to disable sending transmit I/Q samples, or enter the actual IP address.  You must enter "disable"
+# if you have multiple hardwares on the network, and only one should transmit.
+tx_ip = ""
+#tx_ip = "disable"
+#tx_ip = "192.168.1.201"
+
+## tx_audio_port			Tx audio UDP port, integer
+# This is the UDP port for transmit audio I/Q samples.  Enter zero to calculate this from the
+# base hardware port.  Otherwise enter the special custom port.
+tx_audio_port = 0
+
+## rx_udp_clock				Clock frequency Hertz, integer
+# This is the clock frequency of the hardware in Hertz.  For Odyssey use 122880000.
+#rx_udp_clock = 122880000
+
+## tx_level		Tx Level, dict
+# tx_level sets the transmit level 0 to 255 for each band.  The None band is the default.
+# The config screen has a slider 0 to 100% so you can reduce the transmit power.  The sliders
+# only appear if your hardware defines the method SetTxLevel().  The hardware only supports a
+# limited adjustment range, so zero is still a small amount of power.
+tx_level = {
+	None:120, '60':110}
+
+## digital_tx_level			Digital Tx power %, integer
+# Digital modes reduce power by the percentage on the config screen.
+# This is the maximum value of the slider.
+#digital_tx_level = 20
+
+
+## hermes_code_version		Hermes code version, integer
+# There can be multiple Hermes devices on a network, but Quisk can only use one of these.  If you have multiple
+# Hermes devices, you can use this to specify a unique device.  Or use -1 to accept any board.
+hermes_code_version = -1
+
+## hermes_board_id			Hermes board ID, integer
+# There can be multiple Hermes devices on a network, but Quisk can only use one of these.  If you have multiple
+# Hermes devices, you can use this to specify a unique device.  Or use -1 to accept any board.
+hermes_board_id = -1
+
+## hermes_LNA_dB			Initial LNA dB, integer
+# The initial value for the low noise Rx amplifier gain in dB.
+hermes_LNA_dB = 20
+
+## Hermes_BandDict		Hermes Bus, dict
+# The Hermes_BandDict sets the 7 bits on the J16 connector.
+Hermes_BandDict = {
+	'160':0b0000001, '80':0b0000010, '60':0b0000100, '40':0b0001000, '30':0b0010000, '20':0b0100000, '15':0b1000000}
+
+
+################ Sound Devices.  Quisk recognizes eight sound capture and playback devices.
 # Playback devices:
 #    name_of_sound_play      Play radio sound on speakers or headphones
 #        playback_rate            The sample rate, normally 48000, 96000 or 192000
@@ -511,8 +686,9 @@ sndp_active = True
 #        mic_play_chan_I          Channel number 0, 1, ... for I samples
 #        mic_play_chan_Q          Channel number 0, 1, ... for Q samples
 #        tx_channel_delay         Channel number for delay, or -1
-#    digital_output_name     Output monophonic digital samples to another program at 48000 sps
-#    sample_playback_name    Output digital I/Q samples to another program at 48000 sps
+#    digital_output_name     Output monophonic digital samples to another program
+#    sample_playback_name    Output digital I/Q samples to another program
+#    digital_rx1_name     Output monophonic digital samples from Rx1 to another program
 # Capture devices:
 #    microphone_name         The monophonic microphone source
 #        mic_sample_rate          The sample rate; must be 48000
@@ -699,6 +875,16 @@ win_digital_output_name = ""
 
 digital_output_name = ""
 
+## lin_digital_rx1_name		Digital sub-receiver 1 output name, text
+# Output audio to an external program for use with digital modes.
+lin_digital_rx1_name = ""
+
+## win_digital_rx1_name		Digital sub-receiver 1 output name, text
+# Output audio to an external program for use with digital modes.
+win_digital_rx1_name = ""
+
+digital_rx1_name = ""
+
 ## digital_output_level		Digital output level, number
 # This is the volume control 0.0 to 1.0 for digital playback to fldigi, etc.
 digital_output_level = 0.7
@@ -825,15 +1011,6 @@ file_name_playback = ""
 do_repeater_offset = False
 #do_repeater_offset = True
 
-# If you use a transverter, you need to tune your hardware to a frequency lower than
-# the frequency displayed by Quisk.  For example, if you have a 2 meter transverter,
-# you may need to tune your hardware from 28 to 30 MHz to receive 144 to 146 MHz.
-# Enter the transverter offset in Hertz in this dictionary.  For this to work, your
-# hardware must support it.  Currently, the HiQSDR, SDR-IQ and SoftRock are supported.
-bandTransverterOffset = {
-#    '2': 144000000 - 28000000
-}
-
 ## correct_smeter       S-meter correction in S units, number
 # This converts from dB to S-units for the S-meter (it is in S-units).
 correct_smeter = 15.5
@@ -866,14 +1043,24 @@ agc_release_time = 1.0
 # If freq_spacing is not zero, frequencies are rounded to the freq_base plus the
 # freq_spacing; frequency = freq_base + N * freq_spacing.  This is useful at
 # VHF and higher when Quisk is used with a transverter.
+# This option is incompatible with "Frequency round for SSB".
 freq_spacing = 0
 #freq_spacing = 25000
 #freq_spacing = 15000
+
+## freq_round_ssb       Frequency round for SSB, integer
+# If freq_round_ssb is not zero, when the left mouse button is clicked
+# the frequency is rounded for voice modes but not for CW.  Mouse wheel etc. are unaffected.
+# This is useful for HF when many SSB, AM etc. stations are at multiples of 500 or 1000 Hertz.
+# This option is incompatible with "Frequency rounding spacing".
+freq_round_ssb = 0
+#freq_round_ssb = 1000
 
 ## freq_base            Frequency rounding base, integer
 # If freq_spacing is not zero, frequencies are rounded to the freq_base plus the
 # freq_spacing; frequency = freq_base + N * freq_spacing.  This is useful at
 # VHF and higher when Quisk is used with a transverter.
+# This option is incompatible with "Frequency round for SSB".
 freq_base = 0
 #freq_base = 12500
 
@@ -906,6 +1093,12 @@ modulation_index = 1.67
 # Use 1 to turn on PulseAudio debug and status messages.  This allows for debugging of both devices and performance.
 pulse_audio_verbose_output = 0
 #pulse_audio_verbose_output = 1
+
+## favorites_file_path	Path to favorites file, text
+# The quisk config screen has a "favorites" tab where you can enter the frequencies and modes of
+# stations.  The data is stored in this file.  If this is blank, the default is the file
+# quisk_favorites.txt in the directory where your config file is located.
+favorites_file_path = ''
 
 
 
@@ -952,13 +1145,12 @@ dxClExpireTime = 20
 hamlib_ip = "localhost"
 
 ## hamlib_port          IP port for Hamlib, integer
-# You can control Quisk from Hamlib.  Set the Hamlib rig to 2 and the device for rig 2 to
-# localhost:4575.  Or choose a different name and port here.  Set the same name and port
-# in the controlling program.
-# hamlib_port is the port for hambib control.
-hamlib_port = 4575		# Standard port for Quisk
-#hamlib_port = 4532		# Default port for rig 2.
-#hamlib_port = 0		# Turn off Hamlib control.
+# You can control Quisk from Hamlib. For direct control, set the external program to rig 2
+# "Hamlib NET rigctl", and set the Quisk hamlib port to 4532. To use the rigctld program to control
+# Quisk, set the Quisk hamlib port to 4575. To turn off Hamlib control, set the Quisk port to zero.
+#hamlib_port = 4575
+hamlib_port = 4532
+#hamlib_port = 0
 
 ## IQ_Server_IP         Pulse server IP address, text
 #IP Adddress for remote PulseAudio IQ server.
@@ -1090,11 +1282,6 @@ waterfall_scroll_mode = 1	# scroll faster at the top so that a new signal appear
 
 # Select the initial size in pixels (minimum 1) of the graph at the top of the waterfall.
 waterfall_graph_size = 80
-
-# The quisk config screen has a "favorites" tab where you can enter the frequencies and modes of
-# stations.  The data is stored in this file; default quisk_favorites.txt in the directory
-# where your config file is located.
-favorites_file_path = ''
 
 # Quisk saves radio settings in a settings file.  The default directory is the same as the config
 # file, and the file name is quisk_settings.json.  You can set a different name here.  If you dual
@@ -1340,13 +1527,28 @@ btn_text_cycle = unichr(0x21B7)			# Character to display on multi-push buttons
 btn_text_cycle_small = unichr(0x2193)	# Smaller version when there is little space
 btn_text_switch = unichr(0x21C4)		# Character to switch left-right
 
+## color_scheme				Color scheme, text choice
+# This controls the color scheme used by Quisk.  The default color scheme is A, and you can change this scheme
+# in your config file.  Other color schemes are available here.
+color_scheme = 'A'
+#color_scheme = 'B'
+#color_scheme = 'C'
+
+## waterfall_palette			Waterfall colors, text choice
+# This controls the colors used in the waterfall.  The default color scheme is A, and you can change this scheme
+# in your config file.  Other color schemes are available here.
+waterfall_palette = 'A'
+#waterfall_palette = 'B'
+#waterfall_palette = 'C'
+
 
 
 
 ################ Colors
 # Thanks to Steve Murphy, KB8RWQ for the patch adding additional color control.
 # Thanks to Christof, DJ4CM for the patch adding additional color control. 
-# Define colors used by all widgets in wxPython colour format:
+# Define colors used by all widgets in wxPython colour format.
+# This is the default color scheme, color scheme A.  You can change these colors in your config file:
 color_bg			= 'light steel blue'	# Lower screen background
 color_bg_txt		= 'black'             	# Lower screen text color
 color_graph			= 'lemonchiffon1'		# Graph background
@@ -1366,40 +1568,81 @@ color_entry			= color_freq			# frequency entry box
 color_entry_txt     = 'black'		        # text color of entry box
 color_enable		= 'black'				# text color for an enabled button
 color_disable		= 'white'				# text color for a disabled button
-color_popchoice		= 'maroon'			# text color for button that pops up a row of buttons
-color_bandwidth		= 'lemonchiffon2'		# color for bandwidth display; thanks to WB4JFI
-#color_bandwidth = 'lemonchiffon3'
+color_popchoice		= 'maroon'				# text color for button that pops up a row of buttons
+color_bandwidth		= 'lemonchiffon3'		# color for bandwidth display; thanks to WB4JFI
 color_txline		= 'red'					# vertical line color for tx in graph
 color_rxline		= 'green'				# vertical line color for rx in graph
-#color_notebook_txt  = 'black'               # text of notebook labels - NOT USED
 color_graph_msg_fg	= 'black'				# text messages on the graph screen
 color_graph_msg_bg	= 'lemonchiffon2'		# background of text messages on the graph screen
+
+# This color scheme B, a dark color scheme designed by Steve Murphy, KB8RWQ.
+# Additional colors added by N2ADR.
+color_scheme_B = {
+'color_bg'			: '#111111',
+'color_bg_txt'		: 'white',
+'color_graph'		: '#111111',
+'color_config2'		: '#111111',
+'color_gl'			: '#555555',
+'color_graphticks'	: '#DDDDDD',
+'color_graphline'	: '#00AA00',
+'color_graphlabels'	: '#FFFFFF',
+'color_btn'			: '#666666',
+'color_check_btn'	: '#996699',
+'color_cycle_btn'	: '#666699',
+'color_adjust_btn'	: '#669999',
+'color_test'		: 'hot pink',
+'color_freq'		: '#333333',
+'color_freq_txt'	: 'white',
+'color_entry'		: '#333333',
+'color_entry_txt'	: 'white',
+'color_enable'		: 'white',
+'color_disable'		: 'black',
+'color_popchoice'	: 'maroon',
+'color_bandwidth'	: '#333333',
+'color_txline'		: 'red',
+'color_rxline'		: 'green',
+'color_graph_msg_fg'		: 'white',
+'color_graph_msg_bg'		: '#111111',
+}
+
+# This is color scheme C:
+#######################################################################################
 #
-# This is a dark color scheme designed by Steve Murphy, KB8RWQ.
-#color_bg                = '#111111'
-#color_bg_txt            = 'white'
-#color_graph             = '#111111'
-#color_config2           = color_bg
-#color_gl                = '#555555'
-#color_graphticks        = '#DDDDDD'
-#color_graphline         = '#00AA00'
-#color_graphlabels       = '#FFFFFF'
-#color_btn               = '#666666'
-#color_check_btn         = '#996699'
-#color_cycle_btn         = '#666699'
-#color_adjust_btn        = '#669999'
-#color_test              = 'hot pink'
-#color_freq              = '#333333'
-#color_freq_txt          = 'white'
-#color_entry             = color_freq
-#color_entry_txt         = color_freq_txt
-#color_enable            = 'white'
-#color_disable           = 'black'
-#color_bandwidth         = '#333333'
-#color_txline            = 'red'
-#color_rxline            = 'green'
-#color_notebook_txt      = 'white' - NOT USED
-#   Colors are incomplete
+#   Color scheme designed by Sergio, IK8HTM.  04/06/2016
+#   '#red red green green blue blue' x00 to xFF
+#	'#FFFFFF' = white
+#   	'#000000' = black
+#
+#######################################################################################
+color_scheme_C = {
+'color_bg'			: '#123456',
+'color_bg_txt'		: '#FFFFFF',
+'color_graph'		: 'lightcyan3',
+'color_config2'		: '#0000FF',
+'color_gl'			: '#555555',
+'color_graphticks'	: '#DDDDDD',
+'color_graphline'	: '#00AA00',
+'color_graphlabels'	: '#000000',
+'color_btn'			: '#223344',
+'color_check_btn'	: '#A07315',
+'color_cycle_btn'	: '#0031C4',
+'color_adjust_btn'	: '#669999',
+'color_test'		: '#E73EE7',
+'color_freq'		: '#333333',
+'color_freq_txt'	: '#FEF80A',
+'color_entry'		: '#333333',
+'color_entry_txt'	: '#FEF80A',
+'color_enable'		: '#FFFFFF',
+'color_disable'		: '#000000',
+'color_popchoice'	: '#D76B00',
+'color_bandwidth'	: 'lemonchiffon1',
+'color_txline'		: '#FF0000',
+'color_rxline'		: '#3CC918',
+'color_graph_msg_fg'	: '#000000',
+'color_graph_msg_bg'	: 'lemonchiffon2',
+}
+#############################################################################################
+
 
 # These are the palettes for the waterfall.  The one used is named waterfallPallette,
 # so to use a different one, overwrite this name in your configuration file.
@@ -1423,6 +1666,42 @@ digipanWaterfallPalette = (
      (192, 254, 254,   4),
      (255, 255,  58,   0)
       )
+
+waterfallPaletteB = (	# from David Fainitski
+(0, 0, 0, 0),
+(13, 0, 14, 14),
+(26, 0, 40, 40),
+(39, 0, 73, 73),
+(43, 0, 94, 94),
+(56, 0, 115, 121),
+(69, 0, 87, 190),
+(72, 0, 110, 252),
+(85, 0, 166, 252),
+(98, 0, 216, 252),
+(112, 0, 247, 234),
+(125, 2, 255, 124),
+(138, 5, 255, 64),
+(151, 154, 255, 0),
+(164, 219, 255, 0),
+(177, 247, 250, 0),
+(190, 254, 233, 0),
+(214, 254, 185, 0),
+(227, 255, 125, 0),
+(241, 255, 59, 0),
+(255, 255, 0, 0)
+) 
+
+waterfallPaletteC = (	# from David Fainitski
+(0, 0, 0, 0),
+(32, 0, 25, 25),
+(64, 6, 58, 41),
+(96, 16, 78, 43),
+(128, 29, 120, 41),
+(160, 51, 144, 35),
+(192, 116, 141, 43),
+(224, 195, 198, 35),
+(255, 245, 99, 3)
+) 
 
 # This is the data used to draw colored lines on the frequency X axis to
 # indicate CW and Phone sub-bands.  You can make it anything you want.
@@ -1465,6 +1744,12 @@ BandPlan = [
   #[      0, CW], [  50000, eCW], [ 100000, Phone], [ 150000, ePhone], [ 200000, Data], [ 250000, DxData], [ 300000, RTTY], [ 350000, SSTV],
   #[ 400000, AM], [ 450000, Packet], [ 500000, Beacons], [ 550000, Satellite], [ 600000, Repeater], [ 650000, RepInput], [ 700000, Simplex],
   #[ 750000, Other], [ 800000, Special], [ 850000, None],
+  # 137k
+  [  130000, Data],
+  [  150000, None],
+  # 500k
+  [  490000, Data],
+  [  510000, None],
   # 160 meters
   [ 1800000, Data],
   [ 1809000, Other],
@@ -1629,6 +1914,7 @@ BandPlan = [
 # For each band, this dictionary gives the lower and upper band edges.  Frequencies
 # outside these limits will not be remembered as the last frequency in the band.
 BandEdge = {
+	'137k':( 136000,   138000),	'500k':( 400000,   600000),
 	'160':( 1800000,  2000000),	'80' :( 3500000,  4000000),
 	'60' :( 5300000,  5430000),	'40' :( 7000000,  7300000),
 	'30' :(10100000, 10150000),	'20' :(14000000, 14350000),	
@@ -1663,6 +1949,16 @@ bandTime = [
 bandLabels = [
 	'Audio', '160', '80', ('60',) * 5, '40', '30', '20', '17',
 	'15', '12', '10', ('Time',) * len(bandTime)]
+
+## bandTransverterOffset	Transverter Offset, dict
+# If you use a transverter, you need to tune your hardware to a frequency lower than
+# the frequency displayed by Quisk.  For example, if you have a 2 meter transverter,
+# you may need to tune your hardware from 28 to 30 MHz to receive 144 to 146 MHz.
+# Enter the transverter offset in Hertz in this dictionary.  For this to work, your
+# hardware must support it.  Currently, the HiQSDR, SDR-IQ and SoftRock are supported.
+bandTransverterOffset = {
+#    '2': 144000000 - 28000000
+}
 
 
 

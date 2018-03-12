@@ -95,11 +95,15 @@ else:
   if not ConfigPath:
     ConfigPath = os.path.join(DefaultConfigDir, ".quisk_conf.py")
 
-# These FFT sizes have multiple small factors, and are prefered for efficiency:
-fftPreferedSizes = (416, 448, 480, 512, 576, 640, 672, 704, 768, 800, 832,
-864, 896, 960, 1024, 1056, 1120, 1152, 1248, 1280, 1344, 1408, 1440, 1536,
-1568, 1600, 1664, 1728, 1760, 1792, 1920, 2016, 2048, 2080, 2112, 2240, 2304,
-2400, 2464, 2496, 2560, 2592, 2688, 2816, 2880, 2912)
+# These FFT sizes have multiple small factors, and are prefered for efficiency.  FFT size must be an even number.
+fftPreferedSizes = []
+for f2 in range(1, 13):
+  for y in (1, 3, 5, 7, 9, 11, 13, 15):
+    for z in (1, 3, 5, 7, 9, 11, 13, 15):
+      x = 2**f2 * y * z
+      if 300 <= x <= 5000 and x not in fftPreferedSizes:
+        fftPreferedSizes.append(x)
+fftPreferedSizes.sort()
 
 def round(x):	# round float to nearest integer
   if x >= 0:
@@ -478,7 +482,6 @@ class ConfigScreen(wx.Panel):
     self.width = width
     wx.Panel.__init__(self, parent)
     self.notebook = notebook = wx.Notebook(self)
-    self.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self.OnPageChanged)
     va = notebook.GetClassDefaultAttributes()
     notebook.tfg_color = va.colFg	# use for text foreground
     notebook.bg_color = va.colBg
@@ -503,7 +506,7 @@ class ConfigScreen(wx.Panel):
   def FinishPages(self):
     if self.finish_pages:
       self.finish_pages = False
-      if configure: application.local_conf.AddPages(self.notebook, self.width)
+      application.local_conf.AddPages(self.notebook, self.width)
   def ChangeYscale(self, y_scale):
     pass
   def ChangeYzero(self, y_zero):
@@ -517,11 +520,6 @@ class ConfigScreen(wx.Panel):
     self.tx_audio.OnGraphData(data)
   def InitBitmap(self):		# Initial construction of bitmap
     self.status.InitBitmap()
-  def OnPageChanged(self, event=None):
-    if event:
-      tab = event.GetSelection()
-    else:
-      tab = self.notebook.GetSelection()
 
 class ConfigStatus(wx.ScrolledWindow):
   """Display the status screen."""
@@ -599,7 +597,7 @@ class ConfigStatus(wx.ScrolledWindow):
       if self.rjustify[col]:
         w, h = self.mem_dc.GetTextExtent(t)
         x -= w
-      if "Error" in t and t != "Errors":
+      if ("Error" in t or "Stream error" in t) and t != "Errors":
         self.mem_dc.SetTextForeground('Red')
         self.mem_dc.DrawText(t, x, self.mem_y)
         self.mem_dc.SetTextForeground(self.tfg_color)
@@ -939,6 +937,7 @@ class ConfigFavorites(wx.grid.Grid):
       self.init_path = conf.favorites_file_path
     else:
       self.init_path = os.path.join(os.path.dirname(ConfigPath), 'quisk_favorites.txt')
+    conf.favorites_file_in_use = self.init_path
     self.ReadIn()
     if self.GetNumberRows() < 1:
       self.AppendRows()
@@ -1207,6 +1206,55 @@ class ConfigTxAudio(wx.ScrolledWindow):
       QS.set_record_state(3)
       self.tmp_playing = False
 
+class FilterDisplay():
+  def __init__(self, graph_width):
+    # This code displays the filter bandwidth on the graph screen.  It is based on code
+    # provided by Terry Fox, WB4JFI.  Thanks Terry!
+    self.fltr_disp_size = 1
+    self.fltr_disp_tune = 0
+    self.tuningPenTx = wx.Pen(conf.color_txline, 1)
+    self.tuningPenRx = wx.Pen(conf.color_rxline, 1)
+    self.max_height = application.screen_height
+    bitmap = wx.EmptyBitmap(graph_width, self.max_height)
+    self.fltr_disp_tx_dc = wx.MemoryDC()
+    self.fltr_disp_tx_dc.SelectObject(bitmap)
+    br = wx.Brush(conf.color_bandwidth, wx.SOLID)
+    self.fltr_disp_tx_dc.SetBackground(br)
+    self.fltr_disp_tx_dc.SetPen(self.tuningPenTx)
+    self.fltr_disp_tx_dc.DrawLine(0, 0, 0, self.max_height)
+    bitmap = wx.EmptyBitmap(graph_width, self.max_height)
+    self.fltr_disp_rx_dc = wx.MemoryDC()
+    self.fltr_disp_rx_dc.SelectObject(bitmap)
+    br = wx.Brush(conf.color_bandwidth, wx.SOLID)
+    self.fltr_disp_rx_dc.SetBackground(br)
+    self.fltr_disp_rx_dc.SetPen(self.tuningPenRx)
+    self.fltr_disp_rx_dc.DrawLine(0, 0, 0, self.max_height)
+    self.backgroundBrush = wx.Brush(conf.color_graph)
+  def UpdateFilterDisplay(self, bandwidth, style, offset):
+    self.fltr_disp_tx_dc.Clear()
+    self.fltr_disp_rx_dc.Clear()
+    if bandwidth < 2:
+      bandwidth = 1
+    self.fltr_disp_size = bandwidth + offset
+    if style == 'AM':
+      self.fltr_disp_tune = bandwidth // 2
+    elif style == 'LSB':
+      self.fltr_disp_tune = self.fltr_disp_size - 1
+      for dc in (self.fltr_disp_tx_dc, self.fltr_disp_rx_dc):
+        dc.SetPen(wx.TRANSPARENT_PEN)
+        dc.SetBrush(self.backgroundBrush)
+        dc.DrawRectangle(bandwidth, 0, offset, self.max_height)
+    else:
+      self.fltr_disp_tune = 0
+      for dc in (self.fltr_disp_tx_dc, self.fltr_disp_rx_dc):
+        dc.SetPen(wx.TRANSPARENT_PEN)
+        dc.SetBrush(self.backgroundBrush)
+        dc.DrawRectangle(0, 0, offset, self.max_height)
+    self.fltr_disp_tx_dc.SetPen(self.tuningPenTx)
+    self.fltr_disp_tx_dc.DrawLine(self.fltr_disp_tune, 0, self.fltr_disp_tune, self.max_height)
+    self.fltr_disp_rx_dc.SetPen(self.tuningPenRx)
+    self.fltr_disp_rx_dc.DrawLine(self.fltr_disp_tune, 0, self.fltr_disp_tune, self.max_height)
+
 class GraphDisplay(wx.Window):
   """Display the FFT graph within the graph screen."""
   def __init__(self, parent, x, y, graph_width, height, chary):
@@ -1234,8 +1282,6 @@ class GraphDisplay(wx.Window):
     self.y_min = 1000
     self.y_max = 0
     self.max_height = application.screen_height
-    self.tuningPenTx = wx.Pen(conf.color_txline, 1)
-    self.tuningPenRx = wx.Pen(conf.color_rxline, 1)
     self.backgroundPen = wx.Pen(self.GetBackgroundColour(), 1)
     self.backgroundBrush = wx.Brush(self.GetBackgroundColour())
     self.horizPen = wx.Pen(conf.color_gl, 1, wx.SOLID)
@@ -1244,34 +1290,17 @@ class GraphDisplay(wx.Window):
     self.SetFont(self.font)
     if sys.platform == 'win32':
       self.Bind(wx.EVT_ENTER_WINDOW, self.OnEnter)
-    # This code displays the filter bandwidth on the graph screen.  It is based on code
-    # provided by Terry Fox, WB4JFI.  Thanks Terry!
-    self.fltr_disp_size = 1
-    self.fltr_disp_tune = 0
-    bitmap = wx.EmptyBitmap(graph_width, self.max_height)
-    self.fltr_disp_tx_dc = wx.MemoryDC()
-    self.fltr_disp_tx_dc.SelectObject(bitmap)
-    br = wx.Brush(conf.color_bandwidth, wx.SOLID)
-    self.fltr_disp_tx_dc.SetBackground(br)
-    self.fltr_disp_tx_dc.SetPen(self.tuningPenTx)
-    self.fltr_disp_tx_dc.DrawLine(0, 0, 0, self.max_height)
-    bitmap = wx.EmptyBitmap(graph_width, self.max_height)
-    self.fltr_disp_rx_dc = wx.MemoryDC()
-    self.fltr_disp_rx_dc.SelectObject(bitmap)
-    br = wx.Brush(conf.color_bandwidth, wx.SOLID)
-    self.fltr_disp_rx_dc.SetBackground(br)
-    self.fltr_disp_rx_dc.SetPen(self.tuningPenRx)
-    self.fltr_disp_rx_dc.DrawLine(0, 0, 0, self.max_height)
   def OnEnter(self, event):
     if not application.w_phase:
       self.SetFocus()	# Set focus so we get mouse wheel events
   def OnPaint(self, event):
     #print 'GraphDisplay', self.GetUpdateRegion().GetBox()
     dc = wx.PaintDC(self)
+    FD = self.parent.fltr_disp
     # Blit the tuning line and filter display to the screen
-    dc.Blit(self.tune_tx - self.fltr_disp_tune, 0, self.fltr_disp_size, self.max_height, self.fltr_disp_tx_dc, 0, 0)
+    dc.Blit(self.tune_tx - FD.fltr_disp_tune, 0, FD.fltr_disp_size, FD.max_height, FD.fltr_disp_tx_dc, 0, 0)
     if self.tune_rx:
-      dc.Blit(self.tune_rx - self.fltr_disp_tune, 0, self.fltr_disp_size, self.max_height, self.fltr_disp_rx_dc, 0, 0)
+      dc.Blit(self.tune_rx - FD.fltr_disp_tune, 0, FD.fltr_disp_size, FD.max_height, FD.fltr_disp_rx_dc, 0, 0)
     dc.SetPen(wx.Pen(conf.color_graphline, 1))
     dc.DrawLines(self.line)
     dc.SetPen(self.horizPen)
@@ -1300,54 +1329,32 @@ class GraphDisplay(wx.Window):
         self.line[x] = [x, y]
       x = x + 1
     self.Refresh()
-  def UpdateFilterDisplay(self, bandwidth, style, offset):	# WB4JFI ADD - Update filter display
-    self.fltr_disp_tx_dc.Clear()
-    self.fltr_disp_rx_dc.Clear()
-    if bandwidth < 2:
-      bandwidth = 1
-    self.fltr_disp_size = bandwidth + offset
-    if style == 'AM':
-      self.fltr_disp_tune = bandwidth // 2
-    elif style == 'LSB':
-      self.fltr_disp_tune = self.fltr_disp_size - 1
-      for dc in (self.fltr_disp_tx_dc, self.fltr_disp_rx_dc):
-        dc.SetPen(wx.TRANSPARENT_PEN)
-        dc.SetBrush(self.backgroundBrush)
-        dc.DrawRectangle(bandwidth, 0, offset, self.max_height)
-    else:
-      self.fltr_disp_tune = 0
-      for dc in (self.fltr_disp_tx_dc, self.fltr_disp_rx_dc):
-        dc.SetPen(wx.TRANSPARENT_PEN)
-        dc.SetBrush(self.backgroundBrush)
-        dc.DrawRectangle(0, 0, offset, self.max_height)
-    self.fltr_disp_tx_dc.SetPen(self.tuningPenTx)
-    self.fltr_disp_tx_dc.DrawLine(self.fltr_disp_tune, 0, self.fltr_disp_tune, self.max_height)
-    self.fltr_disp_rx_dc.SetPen(self.tuningPenRx)
-    self.fltr_disp_rx_dc.DrawLine(self.fltr_disp_tune, 0, self.fltr_disp_tune, self.max_height)
   def SetTuningLine(self, tune_tx, tune_rx):
     dc = wx.ClientDC(self)
     dc.SetPen(self.backgroundPen)
     dc.SetBrush(self.backgroundBrush)
-    sz = self.fltr_disp_size
-    xa = self.tune_tx - self.fltr_disp_tune
-    dc.DrawRectangle(xa, 0, sz, self.max_height)
+    FD = self.parent.fltr_disp
+    sz = FD.fltr_disp_size
+    xa = self.tune_tx - FD.fltr_disp_tune
+    dc.DrawRectangle(xa, 0, sz, FD.max_height)
     xb = xa + sz
     if self.tune_rx:
-      x = self.tune_rx - self.fltr_disp_tune
-      dc.DrawRectangle(x, 0, sz, self.max_height)
+      x = self.tune_rx - FD.fltr_disp_tune
+      dc.DrawRectangle(x, 0, sz, FD.max_height)
       xa = min(xa, x)
       xb = max(xb, x + sz)
-    x = tune_tx - self.fltr_disp_tune
-    dc.Blit(x, 0, sz, self.max_height, self.fltr_disp_tx_dc, 0, 0)
+    x = tune_tx - FD.fltr_disp_tune
+    dc.Blit(x, 0, sz, FD.max_height, FD.fltr_disp_tx_dc, 0, 0)
     xa = min(xa, x)
     xb = max(xb, x + sz)
     if tune_rx:
-      x = tune_rx - self.fltr_disp_tune
-      dc.Blit(x, 0, sz, self.max_height, self.fltr_disp_rx_dc, 0, 0)
+      x = tune_rx - FD.fltr_disp_tune
+      dc.Blit(x, 0, sz, FD.max_height, FD.fltr_disp_rx_dc, 0, 0)
       xa = min(xa, x)
       xb = max(xb, x + sz)
     dc.SetPen(wx.Pen(conf.color_graphticks,1))
-    dc.DrawLines(self.line[xa:xb])
+    if len(self.line[xa:xb]) > 1:	# Thanks to NS4Y
+      dc.DrawLines(self.line[xa:xb])
     dc.SetPen(self.horizPen)
     for y in self.parent.y_ticks:
       dc.DrawLine(xa, y, xb, y)	# y line
@@ -1356,9 +1363,11 @@ class GraphDisplay(wx.Window):
 
 class GraphScreen(wx.Window):
   """Display the graph screen X and Y axis, and create a graph display."""
-  def __init__(self, parent, data_width, graph_width, in_splitter=0):
+  def __init__(self, parent, data_width, graph_width, fltr_disp, in_splitter=0):
     wx.Window.__init__(self, parent, pos = (0, 0))
+    self.fltr_disp = fltr_disp
     self.in_splitter = in_splitter	# Are we in the top of a splitter window?
+    self.split_unavailable = False		# Are we a multi receive graph or waterfall window?
     if in_splitter:
       self.y_scale = conf.waterfall_graph_y_scale
       self.y_zero = conf.waterfall_graph_y_zero
@@ -1399,6 +1408,7 @@ class GraphScreen(wx.Window):
     self.SetSize((self.width, self.height))
     self.SetSizeHints(self.width, 1, self.width)
     self.SetBackgroundColour(conf.color_graph)
+    self.backgroundBrush = wx.Brush(conf.color_graph)
     self.Bind(wx.EVT_SIZE, self.OnSize)
     self.Bind(wx.EVT_PAINT, self.OnPaint)
     self.Bind(wx.EVT_LEFT_DOWN, self.OnLeftDown)
@@ -1419,6 +1429,8 @@ class GraphScreen(wx.Window):
     self.display.Refresh()
   def OnPaint(self, event):
     dc = wx.PaintDC(self)
+    dc.SetBackground(self.backgroundBrush)
+    dc.Clear()
     dc.SetFont(self.font)
     dc.SetTextForeground(conf.color_graphlabels)
     if self.in_splitter:
@@ -1445,6 +1457,8 @@ class GraphScreen(wx.Window):
     else:
       self.height = h - self.chary		# Leave space for X scale
       self.originY = self.height - self.offsetY
+    if self.originY < 0:
+      self.originY = 0
     self.MakeYScale()
     self.display.SetHeight(self.originY)
     self.display.scale = self.scale
@@ -1607,7 +1621,7 @@ class GraphScreen(wx.Window):
       mouse_y += y
     return mouse_x, mouse_y
   def FreqRound(self, tune, vfo):
-    if conf.freq_spacing:
+    if conf.freq_spacing and not conf.freq_round_ssb:
       freq = tune + vfo
       n = int(freq) - conf.freq_base
       if n >= 0:
@@ -1634,13 +1648,19 @@ class GraphScreen(wx.Window):
         vfo = (vfo + 50) // 100 * 100
       tune = freq + VFO - vfo
       tune = self.FreqRound(tune, vfo)
-      self.ChangeHwFrequency(tune, vfo, 'MouseBtn3', event)
+      self.ChangeHwFrequency(tune, vfo, 'MouseBtn3', event=event)
   def OnLeftDown(self, event):
     sample_rate = int(self.sample_rate * self.zoom)
     mouse_x, mouse_y = self.GetMousePosition(event)
+    if mouse_x <= self.originX:		# click left of Y axis
+      return
+    if mouse_x >= self.originX + self.graph_width:	# click past FFT data
+      return
     self.mouse_x = mouse_x
     x = mouse_x - self.originX
-    if application.split_rxtx and application.split_locktx:
+    if self.split_unavailable:
+      self.mouse_is_rx = False
+    elif application.split_rxtx and application.split_locktx:
       self.mouse_is_rx = True
     elif self.display.tune_rx and abs(x - self.display.tune_tx) > abs(x - self.display.tune_rx):
       self.mouse_is_rx = True
@@ -1654,15 +1674,20 @@ class GraphScreen(wx.Window):
         application.screen.SetTxFreq(self.txFreq, freq)
         QS.set_tune(freq + application.ritFreq, self.txFreq)
       else:
-        freq = self.FreqRound(freq, self.VFO)
-        self.ChangeHwFrequency(freq, self.VFO, 'MouseBtn1', event)
+        rnd = conf.freq_round_ssb
+        if rnd:
+          if application.mode in ('LSB', 'USB', 'AM', 'FM', 'FDV-U', 'FDV-L'):
+            freq = (freq + rnd//2) // rnd * rnd
+        else:
+          freq = self.FreqRound(freq, self.VFO)
+        self.ChangeHwFrequency(freq, self.VFO, 'MouseBtn1', event=event)
     self.CaptureMouse()
   def OnLeftUp(self, event):
     if self.HasCapture():
       self.ReleaseMouse()
       freq = self.FreqRound(self.txFreq, self.VFO)
       if freq != self.txFreq:
-        self.ChangeHwFrequency(freq, self.VFO, 'MouseMotion', event)
+        self.ChangeHwFrequency(freq, self.VFO, 'MouseMotion', event=event)
   def OnMotion(self, event):
     sample_rate = int(self.sample_rate * self.zoom)
     if event.Dragging() and event.LeftIsDown():
@@ -1672,10 +1697,10 @@ class GraphScreen(wx.Window):
         self.mouse_x = mouse_x
         freq = float(x) * sample_rate / self.data_width
         freq = int(freq)
-        self.ChangeHwFrequency(self.txFreq, self.VFO - freq, 'MouseMotion', event)
+        self.ChangeHwFrequency(self.txFreq, self.VFO - freq, 'MouseMotion', event=event)
       else:		# Mouse motion changes the tuning frequency
         # Frequency changes more rapidly for higher mouse Y position
-        speed = max(10, self.originY - mouse_y) / float(self.originY)
+        speed = max(10, self.originY - mouse_y) / float(self.originY + 1)
         x = (mouse_x - self.mouse_x)
         self.mouse_x = mouse_x
         freq = speed * x * sample_rate / self.data_width
@@ -1685,7 +1710,7 @@ class GraphScreen(wx.Window):
           application.screen.SetTxFreq(self.txFreq, application.rxFreq)
           QS.set_tune(application.rxFreq + application.ritFreq, self.txFreq)
         else:					# Mouse motion changes the transmit frequency
-          self.ChangeHwFrequency(self.txFreq + freq, self.VFO, 'MouseMotion', event)
+          self.ChangeHwFrequency(self.txFreq + freq, self.VFO, 'MouseMotion', event=event)
   def OnWheel(self, event):
     if conf.freq_spacing:
       wm = conf.freq_spacing
@@ -1693,7 +1718,9 @@ class GraphScreen(wx.Window):
       wm = self.WheelMod		# Round frequency when using mouse wheel
     mouse_x, mouse_y = self.GetMousePosition(event)
     x = mouse_x - self.originX
-    if application.split_rxtx and application.split_locktx:
+    if self.split_unavailable:
+      self.mouse_is_rx = False
+    elif application.split_rxtx and application.split_locktx:
       self.mouse_is_rx = True
     elif self.display.tune_rx and abs(x - self.display.tune_tx) > abs(x - self.display.tune_rx):
       self.mouse_is_rx = True
@@ -1720,9 +1747,9 @@ class GraphScreen(wx.Window):
       else:		# freq can be negative when the VFO is zero
         freq = - (- freq // wm * wm)
       tune = freq - self.VFO
-      self.ChangeHwFrequency(tune, self.VFO, 'MouseWheel', event)
-  def ChangeHwFrequency(self, tune, vfo, source, event):
-    application.ChangeHwFrequency(tune, vfo, source, event)
+      self.ChangeHwFrequency(tune, self.VFO, 'MouseWheel', event=event)
+  def ChangeHwFrequency(self, tune, vfo, source='', band='', event=None):
+    application.ChangeHwFrequency(tune, vfo, source, band, event)
   def PeakHold(self, name):
     if name == 'GraphP1':
       self.display.peak_hold = int(self.display.scale * conf.graph_peak_hold_1)
@@ -1922,13 +1949,20 @@ class WaterfallDisplay(wx.Window):
     self.Bind(wx.EVT_MOUSEWHEEL, parent.OnWheel)
     self.tune_tx = graph_width // 2	# Current X position of the Tx tuning line
     self.tune_rx = 0				# Current X position of Rx tuning line or zero
-    self.tuningPen = wx.Pen('White', 3)
     self.marginPen = wx.Pen(conf.color_graph, 1)
+    self.tuningPen = wx.Pen('White', 3)
+    self.tuningPenTx = wx.Pen(conf.color_txline, 3)
+    self.tuningPenRx = wx.Pen(conf.color_rxline, 3)
     # Size of top faster scroll region is (top_key + 2) * (top_key - 1) // 2
     self.top_key = 8
     self.top_size = (self.top_key + 2) * (self.top_key - 1) // 2
     # Make the palette
-    pal2 = conf.waterfallPalette
+    if conf.waterfall_palette == 'B':
+      pal2 = conf.waterfallPaletteB
+    elif conf.waterfall_palette == 'C':
+      pal2 = conf.waterfallPaletteC
+    else:
+      pal2 = conf.waterfallPalette
     red = []
     green = []
     blue = []
@@ -1948,7 +1982,7 @@ class WaterfallDisplay(wx.Window):
     self.red = red
     self.green = green
     self.blue = blue
-    bmp = wx.EmptyBitmap(0, 0)
+    bmp = wx.EmptyBitmap(1, 1)
     bmp.x_origin = 0
     self.bitmaps = [bmp] * application.screen_height
     if sys.platform == 'win32':
@@ -1958,16 +1992,23 @@ class WaterfallDisplay(wx.Window):
       self.SetFocus()	# Set focus so we get mouse wheel events
   def OnPaint(self, event):
     sample_rate = int(self.sample_rate * self.zoom)
+    FD = self.parent.fltr_disp
     dc = wx.BufferedPaintDC(self)
     dc.SetTextForeground(conf.color_graphlabels)
     dc.SetBackground(wx.Brush('Black'))
     dc.Clear()
-    y = 0
-    dc.SetPen(self.marginPen)
+    dc.SetPen(wx.TRANSPARENT_PEN)
+    dc.SetBrush(self.parent.backgroundBrush)
+    dc.DrawRectangle(0, 0, self.graph_width, self.margin)
+    dc.Blit(self.tune_tx - FD.fltr_disp_tune, 0, FD.fltr_disp_size, self.margin, FD.fltr_disp_tx_dc, 0, 0)
+    dc.SetPen(self.tuningPenTx)
+    dc.DrawLine(self.tune_tx, 0, self.tune_tx, self.margin)
+    if self.tune_rx:
+      dc.Blit(self.tune_rx - FD.fltr_disp_tune, 0, FD.fltr_disp_size, self.margin, FD.fltr_disp_rx_dc, 0, 0)
+      dc.SetPen(self.tuningPenRx)
+      dc.DrawLine(self.tune_rx, 0, self.tune_rx, self.margin)
     x_origin = int(float(self.VFO) / sample_rate * self.data_width + 0.5)
-    for i in range(0, self.margin):
-      dc.DrawLine(0, y, self.graph_width, y)
-      y += 1
+    y = self.margin
     index = 0
     if conf.waterfall_scroll_mode:	# Draw the first few lines multiple times
       for i in range(self.top_key, 1, -1):
@@ -1985,9 +2026,9 @@ class WaterfallDisplay(wx.Window):
       index += 1
     dc.SetPen(self.tuningPen)
     dc.SetLogicalFunction(wx.XOR)
-    dc.DrawLine(self.tune_tx, 0, self.tune_tx, self.height)
+    dc.DrawLine(self.tune_tx, self.margin, self.tune_tx, self.height)
     if self.tune_rx:
-      dc.DrawLine(self.tune_rx, 0, self.tune_rx, self.height)
+      dc.DrawLine(self.tune_rx, self.margin, self.tune_rx, self.height)
   def SetHeight(self, height):
     self.height = height
     self.SetSize((self.graph_width, height))
@@ -2014,12 +2055,19 @@ class WaterfallDisplay(wx.Window):
     dc = wx.ClientDC(self)
     dc.SetPen(self.tuningPen)
     dc.SetLogicalFunction(wx.XOR)
-    dc.DrawLine(self.tune_tx, 0, self.tune_tx, self.height)
+    dc.DrawLine(self.tune_tx, self.margin, self.tune_tx, self.height)
+    dc.DrawLine(tune_tx, self.margin, tune_tx, self.height)
     if self.tune_rx:
-      dc.DrawLine(self.tune_rx, 0, self.tune_rx, self.height)
-    dc.DrawLine(tune_tx, 0, tune_tx, self.height)
-    if tune_rx:
-      dc.DrawLine(tune_rx, 0, tune_rx, self.height)
+      dc.DrawLine(self.tune_rx, self.margin, self.tune_rx, self.height)
+      dc.DrawLine(tune_rx, self.margin, tune_rx, self.height)
+    FD = self.parent.fltr_disp
+    dc.SetPen(wx.TRANSPARENT_PEN)
+    dc.SetLogicalFunction(wx.COPY)
+    dc.SetBrush(FD.backgroundBrush)
+    dc.DrawRectangle(0, 0, self.graph_width, self.margin)
+    dc.Blit(self.tune_tx - FD.fltr_disp_tune, 0, FD.fltr_disp_size, self.margin, FD.fltr_disp_tx_dc, 0, 0)
+    if self.tune_rx:
+      dc.Blit(self.tune_rx - FD.fltr_disp_tune, 0, FD.fltr_disp_size, self.margin, FD.fltr_disp_rx_dc, 0, 0)
     self.tune_tx = tune_tx
     self.tune_rx = tune_rx
   def ChangeZoom(self, zoom, deltaf):
@@ -2028,15 +2076,16 @@ class WaterfallDisplay(wx.Window):
 
 class WaterfallScreen(wx.SplitterWindow):
   """Create a splitter window with a graph screen and a waterfall screen"""
-  def __init__(self, frame, width, data_width, graph_width):
+  def __init__(self, frame, width, data_width, graph_width, fltr_disp):
     self.y_scale = conf.waterfall_y_scale
     self.y_zero = conf.waterfall_y_zero
     wx.SplitterWindow.__init__(self, frame)
     self.SetSizeHints(width, -1, width)
+    self.SetSashGravity(0.50)
     self.SetMinimumPaneSize(1)
     self.SetSize((width, conf.waterfall_graph_size + 100))	# be able to set sash size
-    self.pane1 = GraphScreen(self, data_width, graph_width, 1)
-    self.pane2 = WaterfallPane(self, data_width, graph_width)
+    self.pane1 = GraphScreen(self, data_width, graph_width, fltr_disp, 1)
+    self.pane2 = WaterfallPane(self, data_width, graph_width, fltr_disp)
     self.SplitHorizontally(self.pane1, self.pane2, conf.waterfall_graph_size)
   def SetDisplayMsg(self, text=''):
     self.pane1.SetDisplayMsg(text)
@@ -2077,8 +2126,8 @@ class WaterfallScreen(wx.SplitterWindow):
 
 class WaterfallPane(GraphScreen):
   """Create a waterfall screen with an X axis and a waterfall display."""
-  def __init__(self, frame, data_width, graph_width):
-    GraphScreen.__init__(self, frame, data_width, graph_width)
+  def __init__(self, frame, data_width, graph_width, fltr_disp):
+    GraphScreen.__init__(self, frame, data_width, graph_width, fltr_disp)
     self.y_scale = conf.waterfall_y_scale
     self.y_zero = conf.waterfall_y_zero
     self.oldVFO = self.VFO
@@ -2102,6 +2151,463 @@ class WaterfallPane(GraphScreen):
     i1 = (self.data_width - self.graph_width) // 2
     i2 = i1 + self.graph_width
     self.display.OnGraphData(data[i1:i2], self.y_zero, self.y_scale)
+
+class MultiRxGraph(GraphScreen):
+  the_modes = ('CWL', 'CWU', 'LSB', 'USB', 'AM', 'FM', 'DGT-U', 'DGT-L', 'DGT-FM', 'DGT-IQ')
+  def __init__(self, parent, data_width, graph_width, index):
+    multi_rx = application.multi_rx_screen
+    width = multi_rx.rx_data_width
+    self.fltr_disp = FilterDisplay(graph_width)
+    GraphScreen.__init__(self, parent, width, width, self.fltr_disp)
+    self.graph_display = self.display
+    self.waterfall_display = WaterfallDisplay(self, self.originX, 0, self.graph_width, 5, self.chary)
+    self.waterfall_display.Hide()
+    self.waterfall_display.VFO = self.VFO
+    self.waterfall_display.data_width = self.data_width
+    self.waterfall_y_scale = conf.waterfall_y_scale
+    self.waterfall_y_zero = conf.waterfall_y_zero
+    self.split_unavailable = True
+    width = self.originX + self.graph_width
+    self.tabX = width + (multi_rx.graph.width - width - multi_rx.rx_btn_width) // 2
+    self.popupX = self.tabX - multi_rx.rx_btn_width * 2
+    self.multirx_index = index
+    self.is_playing = False
+    self.mode_index = 0
+    # Create controls
+    posY = 0
+    half_width = multi_rx.rx_btn_width // 2
+    half_size = half_width, multi_rx.rx_btn_height
+    self.rx_btn = QuiskPushbutton(self, self.OnPopButton, "Rx %d .." % (index + 1))
+    self.rx_btn.SetSize(half_size)
+    self.rx_btn.SetPosition((self.tabX, posY))
+    self.play_btn = QuiskCheckbutton(self, self.OnPlayButton, "Play")
+    self.play_btn.SetSize(half_size)
+    self.play_btn.SetPosition((self.tabX + half_width, posY))
+    posY += multi_rx.rx_btn_height
+    btn1 = QuiskPushbutton(self, self.OnBtnDownBand, conf.Xbtn_text_range_dn, use_right=True)
+    btn2 = QuiskPushbutton(self, self.OnBtnUpBand, conf.Xbtn_text_range_up, use_right=True)
+    btn1.SetSize(half_size)
+    btn2.SetSize(half_size)
+    btn1.SetPosition((self.tabX, posY))
+    btn2.SetPosition((self.tabX + half_width, posY))
+    posY += multi_rx.rx_btn_height
+    self.sliderYs = SliderBoxV(self, 'Ys', self.y_scale, 160, self.OnChangeYscale, True)
+    self.sliderYz = SliderBoxV(self, 'Yz', self.y_zero, 160, self.OnChangeYzero, True)
+    x = self.tabX + (half_width * 2 - self.sliderYs.width - self.sliderYz.width) // 2
+    self.sliderYs.SetDimension(x, posY, self.sliderYs.width, 100)
+    x += self.sliderYs.width
+    self.sliderYz.SetDimension(x, posY, self.sliderYz.width, 100)
+    # Create menu
+    self.multi_rx_menu = wx.Menu()
+    item = self.multi_rx_menu.Append(-1, 'Show graph')
+    self.Bind(wx.EVT_MENU, self.OnShowGraph, item)
+    item = self.multi_rx_menu.Append(-1, 'Show waterfall')
+    self.Bind(wx.EVT_MENU, self.OnShowWaterfall, item)
+    self.multi_rx_menu.AppendSeparator()
+    menu = wx.Menu()
+    self.multi_rx_menu.AppendSubMenu(menu, "Band")
+    for band in conf.bandLabels:
+      if type(band) not in (UnicodeType, StringType):
+        band = band[0]
+        if band == 'Time':
+          continue
+      item = menu.Append(-1, band)
+      self.Bind(wx.EVT_MENU, self.OnChangeBand, item)
+    self.mode_menu = wx.Menu()
+    self.multi_rx_menu.AppendSubMenu(self.mode_menu, "Mode")
+    for mode in self.the_modes:
+      item = self.mode_menu.AppendRadioItem(-1, mode)
+      self.Bind(wx.EVT_MENU, self.OnChangeMode, item)
+    self.filter_menu = wx.Menu()
+    self.multi_rx_menu.AppendSubMenu(self.filter_menu, "Filter")
+    for i in range(6):
+      item = self.filter_menu.AppendRadioItem(-1, '0')
+      self.Bind(wx.EVT_MENU, self.OnChangeFilter, item)
+    self.multi_rx_menu.AppendSeparator()
+    item = self.multi_rx_menu.Append(-1, 'Delete receiver')
+    self.Bind(wx.EVT_MENU, self.OnDeleteReceiver, item)
+    self.ChangeBand(application.lastBand)
+    if multi_rx.rx_zero == multi_rx.waterfall:
+      self.OnShowWaterfall()
+  def ResizeGraph(self):
+    GraphScreen.ResizeGraph(self)
+    w, h = self.GetClientSize()
+    x, y = self.sliderYs.GetPosition()
+    height = max(h - y, self.sliderYs.text_height * 2)
+    self.sliderYs.SetDimension(x, y, self.sliderYs.width, height)
+    x, y = self.sliderYz.GetPosition()
+    self.sliderYz.SetDimension(x, y, self.sliderYz.width, height)
+  def MakeYTicks(self, dc):
+    if self.display == self.graph_display:
+      GraphScreen.MakeYTicks(self, dc)
+  def OnPopButton(self, event):
+    pos = (self.popupX, 10)
+    self.PopupMenu(self.multi_rx_menu, pos)
+  def OnDeleteReceiver(self, event):
+    if self.is_playing:
+      QS.set_multirx_play_channel(-1)
+    application.multi_rx_screen.DeleteReceiver(self)
+  def OnShowGraph(self, event):
+    self.waterfall_display.Hide()
+    self.display = self.graph_display
+    self.SetTxFreq(self.txFreq, self.txFreq)
+    self.UpdateFilterDisplay()
+    self.sliderYs.SetValue(self.y_scale)
+    self.sliderYz.SetValue(self.y_zero)
+    self.display.Show()
+    self.doResize = True
+  def OnShowWaterfall(self, event=None):
+    self.graph_display.Hide()
+    self.display = self.waterfall_display
+    self.SetTxFreq(self.txFreq, self.txFreq)
+    self.UpdateFilterDisplay()
+    self.sliderYs.SetValue(self.waterfall_y_scale)
+    self.sliderYz.SetValue(self.waterfall_y_zero)
+    self.display.Show()
+    self.doResize = True
+  def OnGraphData(self, data):
+    if self.display == self.graph_display:
+      self.display.OnGraphData(data)
+    else:
+      self.display.OnGraphData(data, self.waterfall_y_zero, self.waterfall_y_scale)
+  def OnPlayButton(self, event):
+    application.multi_rx_screen.StopPlaying(self)
+    self.is_playing = event.GetEventObject().GetValue()
+    if self.is_playing:
+      QS.set_filters(self.filter_I, self.filter_Q, self.filter_bandwidth, 1)
+      QS.set_multirx_play_channel(self.multirx_index)
+    else:
+      QS.set_multirx_play_channel(-1)
+  def SetVFO(self, vfo):
+    GraphScreen.SetVFO(self, vfo)
+    self.waterfall_display.VFO = self.VFO
+    self.waterfall_display.Refresh()
+  def OnChangeBand(self, event):
+    idd = event.GetId()
+    band = event.GetEventObject().GetLabel(idd)
+    self.ChangeBand(band)
+  def OnChangeMode(self, event=None):
+    if event is not None:
+      idd = event.GetId()
+      self.mode = event.GetEventObject().GetLabel(idd)
+    mode = self.mode
+    if mode == 'CWL':
+      bws = conf.FilterBwCW
+      index = 0
+      style = 'AM'
+      offset = 0
+    elif mode == 'CWU':
+      bws = conf.FilterBwCW
+      index = 1
+      style = 'AM'
+      offset = 0
+    elif mode == 'LSB':
+      bws = conf.FilterBwSSB
+      index = 2
+      style = 'LSB'
+      offset = 300
+    elif mode == 'USB':
+      bws = conf.FilterBwSSB
+      index = 3
+      style = 'USB'
+      offset = 300
+    elif mode == 'AM':
+      bws = conf.FilterBwAM
+      index = 4
+      style = 'AM'
+      offset = 0
+    elif mode == 'FM':
+      bws = conf.FilterBwFM
+      index = 5
+      style = 'AM'
+      offset = 0
+    elif mode == 'DGT-U':
+      bws = conf.FilterBwDGT
+      index = 7
+      style = 'USB'
+      offset = 300
+    elif mode == 'DGT-L':
+      bws = conf.FilterBwDGT
+      index = 8
+      style = 'LSB'
+      offset = 300
+    elif mode == 'DGT-IQ':
+      bws = conf.FilterBwDGT
+      index = 9
+      style = 'AM'
+      offset = 0
+    elif mode == 'DGT-FM':
+      bws = conf.FilterBwDGT
+      index = 13
+      style = 'AM'
+      offset = 0
+    else:
+      self.mode = 'USB'
+      bws = conf.FilterBwSSB
+      index = 3
+      style = 'USB'
+      offset = 300
+    self.mode_index = index
+    QS.set_multirx_mode(self.multirx_index, index)
+    for i in range(6):
+      item = self.filter_menu.FindItemByPosition(i)
+      item.SetItemLabel(str(bws[i]))
+      if i == 2:
+        item.Check(True)
+    self.filter_bandwidth = bws[2]
+    self.filter_style = style
+    self.filter_offset = offset
+    self.OnChangeFilter()
+    if event is None:
+      idx = self.the_modes.index(self.mode)
+      self.mode_menu.FindItemByPosition(idx).Check(True)
+  def OnChangeFilter(self, event=None):
+    if event is not None:
+      idd = event.GetId()
+      self.filter_bandwidth = int(event.GetEventObject().GetLabel(idd))
+    self.UpdateFilterDisplay()
+    mode = self.mode
+    if mode in ("CWL", "CWU"):
+      center = max(conf.cwTone, self.filter_bandwidth // 2)
+      frate = 48000 / 8;
+    elif mode in ('LSB', 'USB'):
+      center = 300 + self.filter_bandwidth // 2
+      frate = 48000 / 4;
+    elif mode == 'AM':
+      center = 0
+      frate = 48000 / 2;
+    elif mode in ('FM', 'DGT-FM'):
+      center = 0
+      frate = 48000 / 2;
+    elif mode in ('DGT-U', 'DGT-L'):
+      center = 300 + self.filter_bandwidth / 2
+      frate = 48000;
+    elif mode == 'DGT-IQ':
+      center = 0
+      frate = 48000;
+    else:
+      center = 0
+      frate = 48000;
+    self.filter_I, self.filter_Q = application.MakeFilterCoef(frate, None, self.filter_bandwidth, center)
+    if self.is_playing:
+      QS.set_filters(self.filter_I, self.filter_Q, self.filter_bandwidth, 1)	# filter for receiver that is playing sound
+    if self.multirx_index == 0:
+      QS.set_filters(self.filter_I, self.filter_Q, self.filter_bandwidth, 2)	# filter for digital mode output to sound device
+  def UpdateFilterDisplay(self):
+    scale = 1.0 / application.sample_rate * self.data_width
+    bw = int(self.filter_bandwidth * scale + 0.5)
+    offset = int(self.filter_offset * scale + 0.5)
+    self.fltr_disp.UpdateFilterDisplay(bw, self.filter_style, offset)
+  def ChangeBand(self, band):
+    try:
+      vfo, tune, self.mode = application.bandState[band]
+      #print (vfo, tune, self.mode)
+    except:
+      try:
+        f1, f2 = conf.BandEdge[band]
+      except KeyError:
+        f1, f2 = 10000000, 12000000
+      vfo = (f1 + f2) // 2
+      vfo = vfo // 10000
+      vfo *= 10000
+      if vfo < 9000000:
+        self.mode = 'LSB'
+      else:
+        self.mode = 'USB'
+      tune = 0
+    self.OnChangeMode()
+    self.ChangeHwFrequency(tune, vfo, 'ChangeBand')
+  def OnBtnDownBand(self, event):
+    self.OnBtnUpBand(event, True)
+  def OnBtnUpBand(self, event, is_band_down=False):
+    sample_rate = application.sample_rate
+    btn = event.GetEventObject()
+    oldvfo = self.VFO
+    if btn.direction > 0:		# left button was used, move a bit
+      d = int(sample_rate // 9)
+    else:						# right button was used, move to edge
+      d = int(sample_rate * 45 // 100)
+    if is_band_down:
+      d = -d
+    vfo = self.VFO + d
+    if sample_rate > 40000:
+      vfo = (vfo + 5000) // 10000 * 10000	# round to even number
+      delta = 10000
+    elif sample_rate > 5000:
+      vfo = (vfo + 500) // 1000 * 1000
+      delta = 1000
+    else:
+      vfo = (vfo + 50) // 100 * 100
+      delta = 100
+    if oldvfo == vfo:
+      if is_band_down:
+        d = -delta
+      else:
+        d = delta
+    else:
+      d = vfo - oldvfo
+    self.ChangeHwFrequency(self.txFreq - d, self.VFO + d, 'BandUpDown', event=event)
+  def OnChangeYscale(self, event):
+    y_scale = self.sliderYs.GetValue()
+    if self.display == self.graph_display:
+      self.ChangeYscale(y_scale)
+    else:
+      self.waterfall_y_scale = y_scale
+  def OnChangeYzero(self, event):
+    y_zero = self.sliderYz.GetValue()
+    if self.display == self.graph_display:
+      self.ChangeYzero(y_zero)
+    else:
+      self.waterfall_y_zero = y_zero
+  def ChangeHwFrequency(self, tune, vfo, source='', band='', event=None):
+    self.SetTxFreq(tune, tune)
+    self.SetVFO(vfo)
+    Hardware.MultiRxFrequency(self.multirx_index, vfo)
+    QS.set_multirx_freq(self.multirx_index, tune)
+
+class MultiReceiverScreen(wx.SplitterWindow):
+  def __init__(self, frame, data_width, graph_width):
+    application.multi_rx_screen = self		# prevent phase error
+    self.data_width = data_width
+    self.graph_width = graph_width
+    wx.SplitterWindow.__init__(self, frame)
+    self.SetSashGravity(0.50)
+    self.receiver_list = []
+    self.fltr_disp = FilterDisplay(graph_width)
+    self.graph = GraphScreen(self, data_width, graph_width, self.fltr_disp)
+    self.width = self.graph.width
+    self.waterfall = WaterfallScreen(self, self.width, data_width, graph_width, self.fltr_disp)
+    self.rx_zero = self.graph
+    self.Initialize(self.rx_zero)
+    self.waterfall.Hide()
+    self.SetSizeHints(self.width, -1, self.width)
+    # Calculate control width
+    rx_btn = QuiskPushbutton(self, None, "Rx 8....", style=wx.BU_EXACTFIT)
+    self.rx_btn_width, self.rx_btn_height = rx_btn.GetSizeTuple()
+    self.rx_btn_width *= 2
+    rx_btn.Destroy()
+    del rx_btn
+    self.SetMinimumPaneSize(self.rx_btn_height)
+    self.rx_btn_border = 5
+    width = data_width - self.rx_btn_width - self.rx_btn_border * 2
+    self.rx_data_width = fftPreferedSizes[0]
+    for x in fftPreferedSizes:
+      if x >= width:
+        break
+      else:
+        self.rx_data_width = x
+  def __getattr__(self, name):
+    return getattr(self.rx_zero, name)
+  def ChangeRxZero(self, show_graph):
+    if self.IsSplit():
+      old = self.GetWindow2()
+    else:
+      old = self.GetWindow1()
+    if show_graph:
+      new = self.graph
+    else:
+      new = self.waterfall
+    if old != new:
+      self.ReplaceWindow(old, new)
+      new.Show()
+      old.Hide()
+      self.rx_zero = new
+  def StopPlaying(self, excpt):		# change to not playing on all panes except excpt
+    for pane in self.receiver_list:
+      if pane != excpt:
+        pane.play_btn.SetValue(False)
+        pane.is_playing = False
+  def OnAddReceiver(self, event):
+    index = len(self.receiver_list)
+    if index >= 7:
+      return
+    if index == 0:
+      pane2 = self.rx_zero
+      splitter = pane2.GetParent()
+      pane1 = MultiRxGraph(self, self.data_width, self.graph_width, index)
+      self.receiver_list.append(pane1)
+      splitter.SplitHorizontally(pane1, self.rx_zero)
+    else:
+      pane2 = self.receiver_list[-1]
+      parent = pane2.GetParent()
+      splitter = wx.SplitterWindow(parent)
+      splitter.SetSizeHints(self.width, -1, self.width)
+      splitter.SetMinimumPaneSize(self.rx_btn_height)
+      splitter.SetSashGravity(0.50)
+      pane1 = MultiRxGraph(splitter, self.data_width, self.graph_width, index)
+      self.receiver_list.append(pane1)
+      pane2.Reparent(splitter)
+      parent.ReplaceWindow(pane2, splitter)
+      splitter.SplitHorizontally(pane1, pane2)
+    self.SizeEqually()
+    index += 1		# len(self.receiver_list)
+    Hardware.MultiRxCount(index)
+    pane1.ChangeBand(application.lastBand)
+  def DeleteReceiver(self, pane):
+    Hardware.MultiRxCount(len(self.receiver_list) - 1)
+    if len(self.receiver_list) == 1:
+      self.Unsplit(pane)
+      self.receiver_list.remove(pane)
+      del pane
+    elif pane in self.receiver_list[-2:]:
+      self.receiver_list.remove(pane)
+      splitter2 = pane.GetParent()
+      splitter1 = splitter2.GetParent()
+      del pane
+      pane = self.receiver_list[-1]
+      pane.Reparent(splitter1)
+      splitter1.ReplaceWindow(splitter2, pane)
+      splitter2.Destroy()
+    else:
+      self.receiver_list.remove(pane)
+      splitter2 = pane.GetParent()
+      splitter1 = splitter2.GetParent()
+      splitter3 = splitter2.GetWindow1()
+      del pane
+      splitter3.Reparent(splitter1)
+      splitter1.ReplaceWindow(splitter2, splitter3)
+      splitter2.Destroy()
+    index = 0
+    for pane in self.receiver_list:
+      pane.multirx_index = index
+      pane.rx_btn.SetLabel("Rx %d" % (index + 1))
+      QS.set_multirx_mode(index, pane.mode_index)
+      QS.set_multirx_freq(index, pane.txFreq)
+      index += 1
+  def SizeEqually(self):
+    w, h = self.GetClientSize()
+    num = len(self.receiver_list)
+    self.SetSashPosition(h * num // (num + 1))
+    for rx in self.receiver_list[:-1]:
+      splitter = rx.GetParent()
+      w, h = splitter.GetClientSize()
+      num -= 1
+      splitter.SetSashPosition(h * num // (num + 1))
+  def OnIdle(self, event):
+    self.rx_zero.OnIdle(event)
+    for pane in self.receiver_list:
+      pane.OnIdle(event)
+  def OnGraphData(self, data, index=None):
+    if index is None:		# data is for the principal receiver
+      self.waterfall.OnGraphData(data)	# Save data for switch to waterfall
+      if self.rx_zero == self.graph:
+        self.graph.OnGraphData(data)
+    elif index < len(self.receiver_list):
+      self.receiver_list[index].OnGraphData(data)
+  def ChangeSampleRate(self, rate):
+    self.graph.sample_rate = rate
+    self.waterfall.pane1.sample_rate = rate
+    self.waterfall.pane2.sample_rate = rate
+    self.waterfall.pane2.display.sample_rate = rate
+    for pane in self.receiver_list:
+      pane.sample_rate = rate
+      tune = pane.txFreq
+      vfo = pane.VFO
+      pane.txFreq = pane.VFO = -1		# demand change
+      pane.ChangeHwFrequency(tune, vfo, 'NewDecim')
+      pane.UpdateFilterDisplay()
+  def UpdateFilterDisplay(self, bandwidth, style, offset):
+    self.fltr_disp.UpdateFilterDisplay(bandwidth, style, offset)
 
 class ScopeScreen(wx.Window):
   """Create an oscilloscope screen (mostly used for debug)."""
@@ -2247,10 +2753,29 @@ class ScopeScreen(wx.Window):
   def SetTxFreq(self, tx_freq, rx_freq):
     pass
 
+class BandscopeScreen(WaterfallScreen):
+  def __init__(self, frame, width, data_width, graph_width):
+    fltr_disp = FilterDisplay(graph_width)		# This display is only a tuning line
+    WaterfallScreen.__init__(self, frame, width, data_width, graph_width, fltr_disp)
+    try:
+      clock = conf.rx_udp_clock
+    except:	# In case this is not defined
+      clock = 73000000
+    self.pane1.sample_rate = self.pane2.sample_rate = clock / 2
+    self.VFO = clock / 4
+    self.SetVFO(self.VFO)
+  def SetTxFreq(self, tx_freq, rx_freq):
+    freq = tx_freq + application.VFO - self.VFO
+    WaterfallScreen.SetTxFreq(self, freq, freq)
+  def SetFrequency(self, freq):		# freq is 7000000, not the offset from VFO
+    freq = freq - self.VFO
+    WaterfallScreen.SetTxFreq(self, freq, freq)
+
 class FilterScreen(GraphScreen):
   """Create a graph of the receive filter response."""
   def __init__(self, parent, data_width, graph_width):
-    GraphScreen.__init__(self, parent, data_width, graph_width)
+    fltr_disp = FilterDisplay(graph_width)		# This display is only a tuning line
+    GraphScreen.__init__(self, parent, data_width, graph_width, fltr_disp)
     self.y_scale = conf.filter_y_scale
     self.y_zero = conf.filter_y_zero
     self.VFO = 0
@@ -2287,7 +2812,7 @@ class FilterScreen(GraphScreen):
     self.doResize = True
   def OnGraphData(self, data):
     GraphScreen.OnGraphData(self, self.data)
-  def ChangeHwFrequency(self, tune, vfo, source, event):
+  def ChangeHwFrequency(self, tune, vfo, source='', band='', event=None):
     GraphScreen.SetTxFreq(self, tune, tune)
     application.freqDisplay.Display(tune)
   def SetTxFreq(self, tx_freq, rx_freq):
@@ -2524,7 +3049,7 @@ class App(wx.App):
   'levelSquelch', 'levelVOX', 'timeVOX', 'sidetone_volume', 
   'txAudioClipUsb', 'txAudioClipAm','txAudioClipFm', 'txAudioClipFdv',
   'txAudioPreemphUsb', 'txAudioPreemphAm', 'txAudioPreemphFm', 'txAudioPreemphFdv',
-  'wfallScaleZ']
+  'wfallScaleZ', 'graphScaleZ']
   def __init__(self):
     global application
     application = self
@@ -2538,6 +3063,8 @@ class App(wx.App):
       wx.App.__init__(self, redirect=True)
   def QuiskText(self, *args, **kw):			# Make our text control available to widget files
     return QuiskText(*args, **kw)
+  def QuiskText1(self, *args, **kw):			# Make our text control available to widget files
+    return QuiskText1(*args, **kw)
   def QuiskPushbutton(self, *args, **kw):	# Make our buttons available to widget files
     return QuiskPushbutton(*args, **kw)
   def  QuiskRepeatbutton(self, *args, **kw):
@@ -2573,8 +3100,8 @@ class App(wx.App):
     else:
       setattr(conf, 'config_file_exists', False)
     # Read in configuration from the selected radio
-    if configure: self.local_conf = configure.Configuration(self, argv_options.AskMe)
-    if configure: self.local_conf.UpdateConf()
+    self.local_conf = configure.Configuration(self, argv_options.AskMe)
+    self.local_conf.UpdateConf()
     # Choose whether to use Unicode or text symbols
     for k in ('sym_stat_mem', 'sym_stat_fav', 'sym_stat_dx',
         'btn_text_range_dn', 'btn_text_range_up', 'btn_text_play', 'btn_text_rec', 'btn_text_file_rec', 
@@ -2593,6 +3120,7 @@ class App(wx.App):
       name_of_sound_capt = ''
       name_of_mic_play = ''
     self.wfallScaleZ = {}		# scale and zero for the waterfall pane2
+    self.graphScaleZ = {}		# scale and zero for the graph
     self.bandState = {}			# for key band, the current (self.VFO, self.txFreq, self.mode)
     self.bandState.update(conf.bandState)
     self.memoryState = []		# a list of (freq, band, self.VFO, self.txFreq, self.mode)
@@ -2609,7 +3137,7 @@ class App(wx.App):
       }
     # Open hardware file
     global Hardware
-    if configure and self.local_conf.GetHardware():
+    if self.local_conf.GetHardware():
       pass
     else:
       if hasattr(conf, "Hardware"):	# Hardware defined in config file
@@ -2630,7 +3158,7 @@ class App(wx.App):
         setattr(conf, 'widgets_file_name',  '')
     Hardware = self.Hardware
     # Initialization - may be over-written by persistent state
-    if configure: self.local_conf.Initialize()
+    self.local_conf.Initialize()
     self.clip_time0 = 0		# timer to display a CLIP message on ADC overflow
     self.smeter_db_count = 0	# average the S-meter
     self.smeter_db_sum = 0
@@ -2643,6 +3171,8 @@ class App(wx.App):
     self.save_time0 = self.timer
     self.smeter_db_time0 = self.timer
     self.smeter_sunits_time0 = self.timer
+    self.multi_rx_index = 0
+    self.multi_rx_timer = self.timer
     self.band_up_down = 0			# Are band Up/Down buttons in use?
     self.lastBand = 'Audio'
     self.filterAdjBw1 = 1000
@@ -2741,6 +3271,8 @@ class App(wx.App):
               self.bandState.update(v)
             elif k == 'wfallScaleZ':
               self.wfallScaleZ.update(v)
+            elif k == 'graphScaleZ':
+              self.graphScaleZ.update(v)
             else:
               setattr(self, k, v)
       except:
@@ -2775,7 +3307,7 @@ The new code supports multiple corrections per band.""")
     self.pulse_in_use = False
     if sys.platform != 'win32' and conf.show_pulse_audio_devices:
       self.pa_dev_capt, self.pa_dev_play = QS.pa_sound_devices()
-      for key in ("name_of_sound_play", "name_of_mic_play", "digital_output_name", "sample_playback_name"):
+      for key in ("name_of_sound_play", "name_of_mic_play", "digital_output_name", "digital_rx1_name", "sample_playback_name"):
         value = getattr(conf, key)		# playback devices
         if value[0:6] == "pulse:":
           self.pulse_in_use = True
@@ -2809,7 +3341,7 @@ The new code supports multiple corrections per band.""")
     # The graph_width is the width of data_width that is displayed.
     if conf.window_width > 0:
       wFrame, h = frame.GetClientSizeTuple()				# client window width
-      graph = GraphScreen(frame, self.width/2, self.width/2)	# make a GraphScreen to calculate borders
+      graph = GraphScreen(frame, self.width//2, self.width//2, None)	# make a GraphScreen to calculate borders
       self.graph_width = wFrame - (graph.width - graph.graph_width)		# less graph borders equals actual graph_width
       graph.Destroy()
       del graph
@@ -2870,29 +3402,30 @@ The new code supports multiple corrections per band.""")
       if average_count < 1:
         average_count = 1
     self.fft_size = self.data_width * fft_mult
-    # print 'data, graph,fft', self.data_width, self.graph_width, self.fft_size
     # Record the basic application parameters
+    self.multi_rx_screen = MultiReceiverScreen(frame, self.data_width, self.graph_width)
     if sys.platform == 'win32':
       h = self.main_frame.GetHandle()
     else:
       h = 0
-    QS.record_app(self, conf, self.data_width, self.fft_size,
-                 average_count, self.sample_rate, h)
-    #print ('FFT size %d, FFT mult %d, average_count %d, rate %d, Refresh %.2f Hz' % (
-    #    self.fft_size, self.fft_size / self.data_width, average_count, self.sample_rate,
+    QS.record_app(self, conf, self.data_width, self.graph_width, self.fft_size,
+                 self.multi_rx_screen.rx_data_width, self.sample_rate, h)
+    #print ('data_width %d, FFT size %d, FFT mult %d, average_count %d, rate %d, Refresh %.2f Hz' % (
+    #    self.data_width, self.fft_size, self.fft_size / self.data_width, average_count, self.sample_rate,
     #    float(self.sample_rate) / self.fft_size / average_count))
     QS.record_graph(0, 0, 1.0)
     QS.set_tx_audio(vox_level=20, vox_time=self.timeVOX)	# Turn off VOX, set VOX time
-    # Make all the screens and hide all but one
-    self.graph = GraphScreen(frame, self.data_width, self.graph_width)
-    self.screen = self.graph
-    width = self.graph.width
+    # Make all the screens and hide all but one.  MultiReceiver creates the graph and waterfall screens.
+    self.screen = self.multi_rx_screen
+    self.graph = self.multi_rx_screen.graph
+    self.waterfall = self.multi_rx_screen.waterfall
+    width = self.multi_rx_screen.graph.width
     self.config_screen = ConfigScreen(frame, width, self.fft_size)
     self.config_screen.Hide()
-    self.waterfall = WaterfallScreen(frame, width, self.data_width, self.graph_width)
-    self.waterfall.Hide()
     self.scope = ScopeScreen(frame, width, self.data_width, self.graph_width)
     self.scope.Hide()
+    self.bandscope_screen = BandscopeScreen(frame, width, self.graph_width, self.graph_width)
+    self.bandscope_screen.Hide()
     self.filter_screen = FilterScreen(frame, self.data_width, self.graph_width)
     self.filter_screen.Hide()
     self.help_screen = HelpScreen(frame, width, self.screen_height // 10)
@@ -2904,9 +3437,9 @@ The new code supports multiple corrections per band.""")
     frame.SetSizer(vertBox)
     # Add the screens
     vertBox.Add(self.config_screen, 1, wx.EXPAND)
-    vertBox.Add(self.graph, 1)
-    vertBox.Add(self.waterfall, 1)
+    vertBox.Add(self.multi_rx_screen, 1)
     vertBox.Add(self.scope, 1)
+    vertBox.Add(self.bandscope_screen, 1)
     vertBox.Add(self.filter_screen, 1)
     vertBox.Add(self.help_screen, 1)
     vertBox.Add(self.station_screen)
@@ -2933,7 +3466,7 @@ The new code supports multiple corrections per band.""")
     self.main_frame.SetClientSizeWH(width, self.height)
     if hasattr(Hardware, 'pre_open'):       # pre_open() is called before open()
       Hardware.pre_open()
-    if configure and self.local_conf.GetWidgets(self, Hardware, conf, frame, gbs, vertBox):
+    if self.local_conf.GetWidgets(self, Hardware, conf, frame, gbs, vertBox):
       pass
     elif conf.quisk_widgets:
       self.bottom_widgets = conf.quisk_widgets.BottomWidgets(self, Hardware, conf, frame, gbs, vertBox)
@@ -2946,19 +3479,25 @@ The new code supports multiple corrections per band.""")
       for i in self.slider_columns:
         item = gbs.FindItemAtPosition((0, i))
         item.SetSpan((rows, 1))
-    if conf.use_rx_udp == 10:		# Hermes UDP protocol
-      self.add_version = False
-      conf.tx_ip = Hardware.hermes_ip
-      conf.tx_audio_port = conf.rx_udp_port
-    elif conf.use_rx_udp:
+    if conf.use_rx_udp and conf.use_rx_udp != 10:
       self.add_version = True		# Add firmware version to config text
-      conf.rx_udp_decimation = 8 * 8 * 8
-      if not conf.tx_ip:
-        conf.tx_ip = conf.rx_udp_ip
-      if not conf.tx_audio_port:
-        conf.tx_audio_port = conf.rx_udp_port + 2
     else:
       self.add_version = False
+    if conf.use_rx_udp == 10:		# Hermes UDP protocol
+      if conf.tx_ip == '':
+        conf.tx_ip = Hardware.hermes_ip
+      elif conf.tx_ip == 'disable':
+        conf.tx_ip = ''
+      if conf.tx_audio_port == 0:
+        conf.tx_audio_port = conf.rx_udp_port
+    elif conf.use_rx_udp:
+      conf.rx_udp_decimation = 8 * 8 * 8
+      if conf.tx_ip == '':
+        conf.tx_ip = conf.rx_udp_ip
+      elif conf.tx_ip == 'disable':
+        conf.tx_ip = ''
+      if conf.tx_audio_port == 0:
+        conf.tx_audio_port = conf.rx_udp_port + 2
     # Open the hardware.  This must be called before open_sound().
     self.config_text = Hardware.open()
     if self.config_text:
@@ -3033,7 +3572,7 @@ The new code supports multiple corrections per band.""")
     QS.close_rx_udp()
     Hardware.close()
     self.SaveState()
-    if configure: self.local_conf.SaveState()
+    self.local_conf.SaveState()
   def CheckState(self):		# check whether state has changed
     changed = False
     if self.init_path:		# save current program state
@@ -3200,6 +3739,18 @@ The new code supports multiple corrections per band.""")
       b = QuiskCheckbutton(frame, None, 'VOX')
       b.Enable(False)
       left_row3.append(b)
+    # add another receiver
+    self.multi_rx_menu = wx.Menu()
+    item = self.multi_rx_menu.AppendRadioItem(-1, 'Play both')
+    self.Bind(wx.EVT_MENU, self.OnMultirxPlayBoth, item)
+    item = self.multi_rx_menu.AppendRadioItem(-1, 'Play left')
+    self.Bind(wx.EVT_MENU, self.OnMultirxPlayLeft, item)
+    item = self.multi_rx_menu.AppendRadioItem(-1, 'Play right')
+    self.Bind(wx.EVT_MENU, self.OnMultirxPlayRight, item)
+    btn_addrx = QuiskPushbutton(frame, self.multi_rx_screen.OnAddReceiver, "Add Rx")
+    btn_addrx = WrapMenu(btn_addrx, self.multi_rx_menu)
+    if not hasattr(Hardware, 'MultiRxCount'):
+      btn_addrx.Enable(False)
     # Record and Playback buttons
     b = self.btnTmpRecord = QuiskCheckbutton(frame, self.OnBtnTmpRecord, text=conf.Xbtn_text_rec)
     #left_row3.append(b)
@@ -3287,12 +3838,16 @@ The new code supports multiple corrections per band.""")
     b = WrapSlider(b, self.OnBtnFilter, slider_value=self.filterAdjBw1, wintype='filter')
     self.filterButns.ReplaceButton(5, b)
     right_row2 = self.filterButns.GetButtons()
+    if conf.use_rx_udp == 10:		# Hermes UDP protocol
+      t = "Bscope"
+    else:
+      t = "RX Filter"
     if conf.button_layout == 'Large screen':
-      labels = (('Graph', 'GraphP1', 'GraphP2'), 'WFall', ('Scope', 'Scope'), 'Config', 'RX Filter', 'Help')
+      labels = (('Graph', 'GraphP1', 'GraphP2'), 'WFall', ('Scope', 'Scope'), 'Config', t, 'Help')
       self.screenBtnGroup = RadioButtonGroup(frame, self.OnBtnScreen, labels, conf.default_screen)
       right_row3 = self.screenBtnGroup.GetButtons()
     else:
-      labels = ('Graph', 'GraphP1', 'GraphP2', 'WFall', 'Scope', 'Config', 'RX Filter')
+      labels = ('Graph', 'GraphP1', 'GraphP2', 'WFall', 'Scope', 'Config', t)
       self.screenBtnGroup = RadioBtnPopup(frame, self.OnBtnScreen, labels, conf.default_screen)
     # Top row -----------------
     # Band down button
@@ -3324,6 +3879,10 @@ The new code supports multiple corrections per band.""")
     szr.Add(b, 1, flag=wx.ALIGN_CENTER_VERTICAL|wx.RIGHT, border=1)
     b = self.StationNewButton = QuiskPushbutton(frame, self.OnBtnFavoritesShow, conf.Xbtn_text_fav_recall)
     szr.Add(b, 1, flag=wx.ALIGN_CENTER_VERTICAL|wx.LEFT, border=1)
+    # Add another receiver
+    szr = wx.BoxSizer(wx.HORIZONTAL)	# add control to box sizer for centering
+    b_addrx = szr
+    szr.Add(btn_addrx, 1, flag=wx.ALIGN_CENTER_VERTICAL|wx.RIGHT, border=1)
     # Temporary play and record
     szr = wx.BoxSizer(wx.HORIZONTAL)	# add control to box sizer for centering
     b_tmprec = szr
@@ -3422,7 +3981,8 @@ The new code supports multiple corrections per band.""")
       gbs.Add(b_bandupdown, (0, button_start_col + 8), (1, 2), flag=wx.EXPAND)
       gbs.Add(b_membtn,     (0, button_start_col + 11), (1, 3), flag = wx.EXPAND)
       gbs.Add(b_fav,        (0, button_start_col + 15), (1, 2), flag=wx.EXPAND)        
-      gbs.Add(b_tmprec,     (0, button_start_col + 17), (1, 4), flag=wx.EXPAND)        
+      gbs.Add(b_tmprec,     (0, button_start_col + 17), (1, 2), flag=wx.EXPAND)        
+      gbs.Add(b_addrx,      (0, button_start_col + 19), (1, 2), flag=wx.EXPAND)        
       gbs.Add(b_smeter,     (0, button_start_col + 21), (1, 4), flag=wx.EXPAND)
       gbs.Add(b_rit,        (0, button_start_col + 25), (1, 2), flag=wx.EXPAND)
       col = button_start_col + 28
@@ -3460,10 +4020,9 @@ The new code supports multiple corrections per band.""")
         gbs.Add(b, (row, col), (1, 2), flag=flag)
         col += 2
 
-      b = QuiskPushbutton(frame, None, '')
       buttons = left_row2 + left_row3
       buttons.remove(b_test1)
-      buttons += [b_test1, b]
+      buttons += [b_test1, btn_addrx]
       row = 3
       col = 2
       for b in buttons:
@@ -3621,8 +4180,7 @@ The new code supports multiple corrections per band.""")
       style = 'AM'
       bandwidth = 1
       offset = 0
-    self.graph.display.UpdateFilterDisplay(bandwidth, style, offset)
-    self.waterfall.pane1.display.UpdateFilterDisplay(bandwidth, style, offset)
+    self.multi_rx_screen.UpdateFilterDisplay(bandwidth, style, offset)
   def SetFilterByMode(self, mode):
     index = self.modeFilter[mode]
     bw = int(self.filterButns.buttons[index].GetLabel())
@@ -3671,7 +4229,7 @@ The new code supports multiple corrections per band.""")
     self.UpdateFilterDisplay()
     frate = QS.get_filter_rate()
     filtI, filtQ = self.MakeFilterCoef(frate, None, bw, center)
-    QS.set_filters(filtI, filtQ, bw)
+    QS.set_filters(filtI, filtQ, bw, 0)
     if self.screen is self.filter_screen:
       self.screen.NewFilter()
   def OnFreedvMenu(self, event):
@@ -3714,13 +4272,15 @@ The new code supports multiple corrections per band.""")
       self.config_screen.FinishPages()
       self.screen = self.config_screen
     elif name[0:5] == 'Graph':
-      self.screen = self.graph
+      self.screen = self.multi_rx_screen
+      self.screen.ChangeRxZero(True)
       self.screen.SetTxFreq(self.txFreq, self.rxFreq)
       self.freqDisplay.Display(self.VFO + self.txFreq)
       self.screen.PeakHold(name)
       self.station_screen.Show()
     elif name == 'WFall':
-      self.screen = self.waterfall
+      self.screen = self.multi_rx_screen
+      self.screen.ChangeRxZero(False)
       self.screen.SetTxFreq(self.txFreq, self.rxFreq)
       self.freqDisplay.Display(self.VFO + self.txFreq)
       sash = self.screen.GetSashPosition()
@@ -3735,6 +4295,9 @@ The new code supports multiple corrections per band.""")
       self.screen = self.filter_screen
       self.freqDisplay.Display(self.screen.txFreq)
       self.screen.NewFilter()
+    elif name == 'Bscope':
+      self.screen = self.bandscope_screen
+      self.screen.SetTxFreq(self.txFreq, self.rxFreq)
     elif name == 'Help':
       self.screen = self.help_screen
     self.screen.Show()
@@ -3750,12 +4313,18 @@ The new code supports multiple corrections per band.""")
       QS.set_file_record(3, '')
   def ChangeYscale(self, event):
     self.screen.ChangeYscale(self.sliderYs.GetValue())
-    if self.screen == self.waterfall:
-      self.wfallScaleZ[self.lastBand] = (self.waterfall.y_scale, self.waterfall.y_zero)
+    if self.screen == self.multi_rx_screen:
+      if self.multi_rx_screen.rx_zero == self.waterfall:
+        self.wfallScaleZ[self.lastBand] = (self.waterfall.y_scale, self.waterfall.y_zero)
+      elif self.multi_rx_screen.rx_zero == self.graph:
+        self.graphScaleZ[self.lastBand] = (self.graph.y_scale, self.graph.y_zero)
   def ChangeYzero(self, event):
     self.screen.ChangeYzero(self.sliderYz.GetValue())
-    if self.screen == self.waterfall:
-      self.wfallScaleZ[self.lastBand] = (self.waterfall.y_scale, self.waterfall.y_zero)
+    if self.screen == self.multi_rx_screen:
+      if self.multi_rx_screen.rx_zero == self.waterfall:
+        self.wfallScaleZ[self.lastBand] = (self.waterfall.y_scale, self.waterfall.y_zero)
+      elif self.multi_rx_screen.rx_zero == self.graph:
+        self.graphScaleZ[self.lastBand] = (self.graph.y_scale, self.graph.y_zero)
   def OnChangeZoom(self, event):
     x = self.sliderZo.GetValue()
     if x < 50:
@@ -3852,20 +4421,20 @@ The new code supports multiple corrections per band.""")
       QS.set_volume(0)
     else:
       QS.set_volume(self.audio_volume)
+  def OnMultirxPlayBoth(self, event):
+    QS.set_multirx_play_method(0)
+  def OnMultirxPlayLeft(self, event):
+    QS.set_multirx_play_method(1)
+  def OnMultirxPlayRight(self, event):
+    QS.set_multirx_play_method(2)
   def OnBtnDecimation(self, event):
     i = event.GetSelection()
     rate = Hardware.VarDecimSet(i)
     self.vardecim_set = rate
     if rate != self.sample_rate:
       self.sample_rate = rate
-      self.graph.sample_rate = rate
-      self.waterfall.pane1.sample_rate = rate
-      self.waterfall.pane2.sample_rate = rate
-      self.waterfall.pane2.display.sample_rate = rate
-      average_count = float(rate) / conf.graph_refresh / self.fft_size
-      average_count = int(average_count + 0.5)
-      average_count = max (1, average_count)
-      QS.change_rate(rate, average_count)
+      self.multi_rx_screen.ChangeSampleRate(rate)
+      QS.change_rate(rate, 1)
       #print ('FFT size %d, FFT mult %d, average_count %d, rate %d, Refresh %.2f Hz' % (
       #  self.fft_size, self.fft_size / self.data_width, average_count, rate,
       #  float(rate) / self.fft_size / average_count))
@@ -4114,6 +4683,10 @@ The new code supports multiple corrections per band.""")
     The hardware will reply with the updated frequencies which may be different
     from those requested; use and display the returned tune and vfo.
     """
+    if self.screen == self.bandscope_screen:
+      freq = vfo + tune
+      tune = freq % 10000
+      vfo = freq - tune
     tune, vfo = Hardware.ChangeFrequency(vfo + tune, vfo, source, band, event)
     self.ChangeDisplayFrequency(tune - vfo, vfo)
   def ChangeDisplayFrequency(self, tune, vfo):
@@ -4124,7 +4697,10 @@ The new code supports multiple corrections per band.""")
       self.txFreq = tune
       if not self.split_rxtx:
         self.rxFreq = self.txFreq
-      self.screen.SetTxFreq(self.txFreq, self.rxFreq)
+      if self.screen == self.bandscope_screen:
+        self.screen.SetFrequency(tune + vfo)
+      else:
+        self.screen.SetTxFreq(self.txFreq, self.rxFreq)
       QS.set_tune(self.rxFreq + self.ritFreq, self.txFreq)
     if vfo != self.VFO:
       change = 1
@@ -4332,7 +4908,7 @@ The new code supports multiple corrections per band.""")
     try:
       vfo, tune, mode = self.bandState[band]
     except KeyError:
-      vfo, tune, mode = (0, 0, 'LSB')
+      vfo, tune, mode = (1000000, 0, 'LSB')
     if band == '60':
       if self.mode in ('CWL', 'CWU'):
         freq60 = []
@@ -4372,6 +4948,11 @@ The new code supports multiple corrections per band.""")
     self.txFreq = self.VFO = -1		# demand change
     self.ChangeBand(band)
     self.ChangeHwFrequency(tune, vfo, 'BtnBand', band=band)
+    if self.pttButton:
+      if band in ('Time', 'Audio') or conf.tx_level.get(band, 127) == 0:
+        self.pttButton.Enable(False)
+      else:
+        self.pttButton.Enable(True)
   def BandFromFreq(self, frequency):	# Change to a new band based on the frequency
     try:
       f1, f2 = conf.BandEdge[self.lastBand]
@@ -4397,7 +4978,10 @@ The new code supports multiple corrections per band.""")
   def ChangeBand(self, band):
     Hardware.ChangeBand(band)
     self.waterfall.SetPane2(self.wfallScaleZ.get(band, (conf.waterfall_y_scale, conf.waterfall_y_zero)))
-    if self.screen == self.waterfall:
+    s, z = self.graphScaleZ.get(band, (conf.graph_y_scale, conf.graph_y_zero))
+    self.graph.ChangeYscale(s)
+    self.graph.ChangeYzero(z)
+    if self.screen == self.multi_rx_screen and self.multi_rx_screen.rx_zero in (self.waterfall, self.graph):
       self.sliderYs.SetValue(self.screen.y_scale)
       self.sliderYz.SetValue(self.screen.y_zero)
   def OnBtnUpDnBandDelta(self, event, is_band_down):
@@ -4609,6 +5193,10 @@ The new code supports multiple corrections per band.""")
       elif ptt is False and self.pttButton.GetValue():
         self.SetPTT(False)
     self.timer = time.time()
+    if conf.use_rx_udp == 10:		# Hermes UDP protocol
+      data = QS.get_graph(2, 1.0, 0)
+      if data and self.screen == self.bandscope_screen:
+        self.screen.OnGraphData(data)
     if self.screen == self.scope:
       data = QS.get_graph(0, 1.0, 0)	# get raw data
       if data:
@@ -4623,7 +5211,12 @@ The new code supports multiple corrections per band.""")
       data = QS.get_graph(1, self.zoom, float(self.zoom_deltaf))	# get FFT data
       if data:
         #T('')
-        if self.smeter_usage == "smeter":		# update the S-meter
+        if self.screen == self.bandscope_screen:
+          d = QS.get_hermes_adc()
+          if d < 1:
+            d = 1.0
+          self.smeter.SetLabel(" ADC %.0f%% %.0fdB" % (d / 20.48, 20 * math.log10(d / 2048)))
+        elif self.smeter_usage == "smeter":		# update the S-meter
           if self.mode in ('FDV-U', 'FDV-L'):
             self.NewDVmeter()
           else:
@@ -4632,10 +5225,9 @@ The new code supports multiple corrections per band.""")
           self.MeasureFrequency()	# display measured frequency
         else:
           self.MeasureAudioVoltage()		# display audio voltage
-        if self.screen == self.graph:
-          self.waterfall.OnGraphData(data)		# save waterfall data
-          self.graph.OnGraphData(data)			# Send message to draw new data
-        elif self.screen == self.config_screen:
+        if self.screen == self.config_screen:
+          pass
+        elif self.screen == self.bandscope_screen:
           pass
         else:
           self.screen.OnGraphData(data)			# Send message to draw new data
@@ -4643,6 +5235,9 @@ The new code supports multiple corrections per band.""")
         #application.Yield()
         #T('Yield')
         return 1		# We got new graph/scope data
+    data, index = QS.get_multirx_graph()	# get FFT data for sub-receivers
+    if data:
+      self.multi_rx_screen.OnGraphData(data, index)
     if QS.get_overrange():
       self.clip_time0 = self.timer
       self.freqDisplay.Clip(1)
@@ -4672,7 +5267,7 @@ The new code supports multiple corrections per band.""")
         self.save_time0 = self.timer
         if self.CheckState():
           self.SaveState()
-        if configure: self.local_conf.SaveState()
+        self.local_conf.SaveState()
       if self.tmp_playing and QS.set_record_state(-1):	# poll to see if playback is finished
         self.btnTmpPlay.SetValue(False, True)
       if self.file_play_state == 0:

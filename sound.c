@@ -46,9 +46,10 @@ static int debug_timer = 1;		// count up number of samples
 #endif
 
 static struct sound_dev Capture, Playback, MicCapture, MicPlayback, DigitalInput, DigitalOutput, RawSamplePlayback;
+struct sound_dev quisk_DigitalRx1Output;
 // These are arrays of all capture and playback devices, and MUST end with NULL:
 static struct sound_dev * CaptureDevices[] = {&Capture, &MicCapture, &DigitalInput, NULL};
-static struct sound_dev * PlaybackDevices[] = {&Playback, &MicPlayback, &DigitalOutput, &RawSamplePlayback, NULL};
+static struct sound_dev * PlaybackDevices[] = {&Playback, &MicPlayback, &DigitalOutput, &RawSamplePlayback, &quisk_DigitalRx1Output, NULL};
 static int radio_sound_socket = INVALID_SOCKET;		// send radio sound samples to a socket
 static int radio_sound_mic_socket = INVALID_SOCKET;	// receive mic samples from a socket
 static int radio_sound_nshorts;						// number of shorts (two bytes) to send
@@ -426,6 +427,7 @@ static void send_radio_sound_socket(complex double * cSamples, int count, double
 int quisk_read_sound(void)	// Called from sound thread
 {  // called in an infinite loop by the main program
 	int i, nSamples, mic_count, mic_interp, retval, is_cw, mic_sample_rate;
+	double mic_play_volume;
 	complex double tx_mic_phase;
 	static double cwEnvelope=0;
 	static double cwCount=0;
@@ -599,6 +601,7 @@ int quisk_read_sound(void)	// Called from sound thread
 	}
 	// Mic playback without a mic is needed for CW
 	if (MicPlayback.handle) {		// Mic playback: send mic I/Q samples to a sound card
+		mic_play_volume = 1.0;
 		if (rxMode == 0 || rxMode == 1) {	// Transmit CW
 			is_cw = 1;
 		}
@@ -640,6 +643,7 @@ int quisk_read_sound(void)	// Called from sound thread
 			}
 		}
 		else if( ! DEBUG_MIC && ! quisk_is_key_down()) {		// Transmit SSB
+			mic_play_volume = 0.0;
 			for (i = 0; i < mic_count; i++)
 				cSamples[i] = 0.0;
 		}
@@ -664,7 +668,7 @@ int quisk_read_sound(void)	// Called from sound thread
 		if (MicPlayback.doAmplPhase)
 			correct_sample (&MicPlayback, cSamples, mic_count);
 		// play mic samples
-		play_sound_interface(&MicPlayback, mic_count, cSamples, 1, 1.0);
+		play_sound_interface(&MicPlayback, mic_count, cSamples, 1, mic_play_volume);
 #if DEBUG_MIC == 2
 		quisk_process_samples(cSamples, mic_count);
 #endif
@@ -872,6 +876,7 @@ void quisk_open_sound(void)	// Called from GUI thread
 	strncpy(DigitalInput.name, QuiskGetConfigString ("digital_input_name", ""), QUISK_SC_SIZE);
 	strncpy(DigitalOutput.name, QuiskGetConfigString ("digital_output_name", ""), QUISK_SC_SIZE);
 	strncpy(RawSamplePlayback.name, QuiskGetConfigString ("sample_playback_name", ""), QUISK_SC_SIZE);
+	strncpy(quisk_DigitalRx1Output.name, QuiskGetConfigString ("digital_rx1_name", ""), QUISK_SC_SIZE);
    
 	// Set stream descriptions. This is important for "deviceless" drivers like
 	// PulseAudio to be able to distinguish the streams from each other.
@@ -886,6 +891,7 @@ void quisk_open_sound(void)	// Called from GUI thread
 	strncpy(DigitalInput.stream_description, "Digital Input", QUISK_SC_SIZE);
 	strncpy(DigitalOutput.stream_description, "Digital Output", QUISK_SC_SIZE);
 	strncpy(RawSamplePlayback.stream_description, "Raw Sample output", QUISK_SC_SIZE);
+	strncpy(quisk_DigitalRx1Output.stream_description, "Digital Rx1 Output", QUISK_SC_SIZE);
    
 	Playback.sample_rate = quisk_sound_state.playback_rate;		// Radio sound play rate
 	MicPlayback.sample_rate = quisk_sound_state.mic_playback_rate;
@@ -905,6 +911,10 @@ void quisk_open_sound(void)	// Called from GUI thread
 	RawSamplePlayback.sample_rate = quisk_sound_state.sample_rate;
 	RawSamplePlayback.channel_I = 0;
 	RawSamplePlayback.channel_Q = 1;
+	// Playback device for digital modes from sub-receivers
+	quisk_DigitalRx1Output.sample_rate = 48000;
+	quisk_DigitalRx1Output.channel_I = 0;
+	quisk_DigitalRx1Output.channel_Q = 1;
 
 	set_num_channels (&Capture);
 	set_num_channels (&Playback);
@@ -913,6 +923,7 @@ void quisk_open_sound(void)	// Called from GUI thread
 	set_num_channels (&DigitalInput);
 	set_num_channels (&DigitalOutput);
 	set_num_channels (&RawSamplePlayback);
+	set_num_channels (&quisk_DigitalRx1Output);
 
 	//Needed for pulse audio context connection (KM4DSJ)
 	Capture.stream_dir_record = 1;
@@ -922,6 +933,7 @@ void quisk_open_sound(void)	// Called from GUI thread
 	DigitalInput.stream_dir_record = 1;
 	DigitalOutput.stream_dir_record = 0;
 	RawSamplePlayback.stream_dir_record = 0;
+	quisk_DigitalRx1Output.stream_dir_record = 0;
 
 	//For remote IQ server over pulseaudio (KM4DSJ)
 	if (quisk_sound_state.IQ_server[0]) {
@@ -960,6 +972,8 @@ void quisk_open_sound(void)	// Called from GUI thread
 	DigitalInput.latency_frames = 0;
 	DigitalOutput.read_frames = 0;
 	DigitalOutput.latency_frames = DigitalOutput.sample_rate * 500 / 1000;	// 500 milliseconds
+	quisk_DigitalRx1Output.read_frames = 0;
+	quisk_DigitalRx1Output.latency_frames = quisk_DigitalRx1Output.sample_rate * 500 / 1000;	// 500 milliseconds
 	// set capture and playback for raw samples
 	RawSamplePlayback.read_frames = 0;
 	RawSamplePlayback.latency_frames = RawSamplePlayback.sample_rate * 500 / 1000;	// 500 milliseconds
@@ -1081,6 +1095,7 @@ PyObject * quisk_sound_errors(PyObject * self, PyObject * args)
 	AddCard(&MicPlayback,	pylist, "Play microphone sound");
 	AddCard(&DigitalOutput,	pylist, "Play digital mode sound");
 	AddCard(&RawSamplePlayback, pylist, "Play raw samples");
+	AddCard(&quisk_DigitalRx1Output,	pylist, "Play digital Rx1 sound");
 	return pylist;
 }
 

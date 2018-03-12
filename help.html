@@ -9,7 +9,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 </head><body>
 <h3>
-QUISK Help (November 2015)
+QUISK Help (November 2017)
 </h3>
 
 <p>
@@ -173,7 +173,7 @@ You can change the transmit frequency by clicking
 the top or bottom of the digits, or by rolling the mouse wheel over the digit.
 The frequency display window will turn red to indicate sample capture overrun (ADC clipping).
 The large screen layout has a frequency entry window.  Enter a frequency in Hertz without a decimal point, or megahertz with one.
-The left and right pointing arrows move the frequency up and down the band without changing the tuning.  You can
+The up and down pointing arrows move the frequency up and down the band without changing the tuning.  You can
 right or left click them, or hold them down with the mouse to keep moving.
 </p>
 
@@ -446,33 +446,47 @@ preemphasis.
 <h3 id="g0.0.11">Digital Modes DGT-* </h3>
 
 <p>
-These modes are used for digital signals, and require an  external
-program such as Fldigi or FreeDV to decode the signals.  Press the "DGT-"
-button repeatedly to select a digital mode.  To use Fldigi,
-first start Quisk; then start Fldigi and change "Rig Control" to "Use
-XML-RPC".  Now changing the frequency in either program should
-change the other.  Now you need to connect the samples.
-You must configure a loopback sound device to transfer samples
-between Quisk and fldigi.  Quisk sends its audio to Fldigi to
-decode signals, and Fldigi sends audio to Quisk for transmission. 
+These modes are used for digital signals, and require an external
+program such as Fldigi or wsjtx to decode the signals. First, connect your digital program
+to quisk using Hamlib or XML-RPC so that frequency changes are recognized.
+See "Hamlib Control" below. Next you need a way to transfer digital samples between
+the programs. For Windows, install a Virtual Audio Cable (VAC) and connect Quisk to one end and the
+digital program to the other. For Linux, Quisk can create a VAC itself by using PulseAudio.
+On the Quisk radio "Sound" configuration screen, set Digital Input to
+pulse:QuiskDigitalInput.monitor, and set Digital Output to pulse:QuiskDigitalOutput.
+These names should be on the drop down list. If they are missing, restart Quisk.
+In your digital program, connect the digital
+input to QuiskDigitalOutput.monitor and the digital output to QuiskDigitalInput.
 See the <a href="docs.html">documentation</a> for more information.</p>
 
 <h3 id="g0.0.12">Hamlib Control </h3>
 
-Most digital mode decoders and logging programs use Hamlib to control
-a rig.  To connect Hamlib to Quisk, configure your client
-program to use rig 2 and device localhost:4575.  Rig 2 specifies a
-TCP connection, and Quisk is listening on localhost port 4575.  If
-your program does not offer rig 2, please update your Hamlib files for
-that program.  If your program can not set the TCP port to
-localhost:4575, then change the port Quisk uses by adding "hamlib_port
-= 4532" to your config file. 
-See the <a href="docs.html">documentation</a> for more information.
-
-
-
 <p>
-Have fun with Quisk.
+Most digital decoders and logging programs use Hamlib to control
+a rig so that frequency changes in one program are recognized in the other.
+To connect an external program to Quisk using Hamlib, configure your program to use "Hamlib NET rigctl" (rig 2).
+Then go to the Quisk "Remote" config screen for your radio and set
+"IP port for Hamlib" to 4532. This assumes you are not using the rigctld daemon program.  If you are,
+set the Quisk port to 4575 and tell rigctld to control quisk on port 4575.
+You can also control Quisk from another program by using the XML-RPC method if this is available
+in your program.  Fldigi can use this method.
 </p>
+<h3 id="g0.0.13">Multiple Receivers </h3>
+
+Quisk can tune in two frequencies in the same band by using the "Split" button.
+This is meant for working DX split, but it can be used anywhere in the band.
+But if you want to receive in two different bands at once, you need SDR hardware that
+can support multiple sub-receivers.  The Hermes-Lite and other Hermes hardware can do this.
+Press the "Add Rx" button to add additional receivers.  You will get multiple receiver
+screens with their own control buttons and menus.  The main buttons in Quisk still control
+the main receiver and transmitter.  The menu button on the "Add Rx" button controls where
+the sub-receiver sound goes.  When a sub-receiver "Play" button is pressed, you can play the sound
+alone, or together with the main receiver sound.  There is an additional device on the sound screen
+that can direct the sound from sub-receiver 1 to an external digital program.
+There is a limit to how many sub-receivers your hardware can support.  Quisk does not know this
+limit, so please do not request more sub-receivers than actually exist.
+
+
+<h4>Have fun with Quisk.</h4>
 </body>
 </html>

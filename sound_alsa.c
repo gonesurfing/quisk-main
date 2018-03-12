@@ -23,6 +23,7 @@ static short buffer2[SAMP_BUFFER_SIZE];				// Buffer for 2-byte samples from sou
 static unsigned char buffer3[3 * SAMP_BUFFER_SIZE];	// Buffer for 3-byte samples from sound
 static int buffer4[SAMP_BUFFER_SIZE];				// Buffer for 4-byte samples from sound
 static int bufferz[SAMP_BUFFER_SIZE];				// Buffer for zero samples
+static double mic_playbuf_util = 0.70;		// Current mic play buffer utilization 0.0 to 1.0
 
 int quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
 {	// Read sound samples from the ALSA soundcard.
@@ -154,6 +155,24 @@ int quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
 		}
 		break;
 	}
+#if CORRECT_PLAY_RATE
+	if ( ! strcmp(dev->stream_description, "Microphone Input")) {
+		if (mic_playbuf_util > 0.85) {		// Remove a sample
+			nSamples--;
+#if DEBUG_IO
+			printf("read_alsa %s: Remove a mic sample, util %.2lf\n", dev->stream_description, mic_playbuf_util);
+#endif
+		}
+		else if(mic_playbuf_util < 0.55 && nSamples >= 2) {	// Add a sample
+			cSamples[nSamples] = cSamples[nSamples - 1];
+			cSamples[nSamples - 1] = (cSamples[nSamples - 2] + cSamples[nSamples]) / 2.0;
+			nSamples++;
+#if DEBUG_IO
+			printf("read_alsa %s: Add a mic sample, util %.2lf\n", dev->stream_description, mic_playbuf_util);
+#endif
+		}
+	}
+#endif
 	for (i = 0; i < nSamples; i++) {	// DC removal; R.G. Lyons page 553
 		c = cSamples[i] + dev->dc_remove * 0.95;
 		cSamples[i] = c - dev->dc_remove;
@@ -211,6 +230,9 @@ void quisk_play_alsa(struct sound_dev * playdev, int nSamples,
 	if (report_latency) {		// Report for main playback device
 		quisk_sound_state.latencyPlay = delay;		// samples left in play buffer
 	}
+	if ( ! strcmp(playdev->stream_description, "IQ Output")) {
+		mic_playbuf_util = (double)(nSamples + delay) / playdev->latency_frames;
+	}
 	// There will be additional samples available to read in the capture buffer.
 	index = 0;
 #if CORRECT_PLAY_RATE
@@ -218,20 +240,39 @@ void quisk_play_alsa(struct sound_dev * playdev, int nSamples,
 	timer += nSamples;
 	if (timer > playdev->sample_rate) {
 		timer = 0;
-		printf("play_alsa %s: Samples new %d old %ld total %ld latency_frames %d\n", playdev->name, nSamples, delay, nSamples + delay, playdev->latency_frames);
+		printf("play_alsa %s: Samples new %d old %ld total %ld latency_frames %d\n", playdev->stream_description, nSamples, delay, nSamples + delay, playdev->latency_frames);
 	}
 #endif
-	if (nSamples + delay > playdev->latency_frames * 9 / 10) {
+	if (volume == 0.0) {
+		n = playdev->latency_frames * 7 / 10 - delay;	// samples needed to get back to the starting value of 70% full
+#if DEBUG_IO
+		if (abs(n - nSamples) > 100)
+			printf("play_alsa %s: Zero volume correction nSamples %5d to %5d\n", playdev->stream_description, nSamples, n);
+#endif
+		if (n <= 0)
+			nSamples = 0;
+		else if (n <= nSamples)
+			nSamples = n;
+		else {
+			n -= nSamples;	// number of samples to add
+			if (n > 100)	// arbitrary increase - should be tested
+				n = 100;
+			for (i = 0; i < n; i++)
+				cSamples[nSamples++] = 0.0;
+		}
+	}
+	else if (nSamples + delay > playdev->latency_frames * 95 / 100) {
 		nSamples--;
 #if DEBUG_IO
-		printf("play_alsa %s: Remove a sample nSamples %d  delay %d  total %d\n", playdev->name, nSamples, (int)delay, nSamples + (int)delay);
+		printf("play_alsa %s: Remove a sample nSamples %d  delay %d  total %d\n", playdev->stream_description, nSamples, (int)delay, nSamples + (int)delay);
 #endif
 	}
-	else if(nSamples + delay < playdev->latency_frames * 5 / 10) {
+	else if(nSamples + delay < playdev->latency_frames * 4 / 10 && nSamples >= 2) {
 		cSamples[nSamples] = cSamples[nSamples - 1];
+		cSamples[nSamples - 1] = (cSamples[nSamples - 2] + cSamples[nSamples]) / 2.0;
 		nSamples++;
 #if DEBUG_IO
-		printf ("play_alsa %s: Add a sample nSamples %d  delay %d  total %d\n", playdev->name, nSamples, (int)delay, nSamples + (int)delay);
+		printf ("play_alsa %s: Add a sample nSamples %d  delay %d  total %d\n", playdev->stream_description, nSamples, (int)delay, nSamples + (int)delay);
 #endif
 	}
 #endif
@@ -241,7 +282,7 @@ void quisk_play_alsa(struct sound_dev * playdev, int nSamples,
 		playdev->dev_error++;
 #if DEBUG_IO
 		//QuiskPrintTime("", 0);
-		printf("play_alsa %s: Discard %d of %d samples at %ld delay\n", playdev->name, index, nSamples, delay);
+		printf("play_alsa %s: Discard %d of %d samples at %ld delay\n", playdev->stream_description, index, nSamples, delay);
 #endif
 	}
 

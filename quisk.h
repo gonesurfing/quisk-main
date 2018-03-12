@@ -18,6 +18,7 @@
 #define INTERP_FILTER_TAPS	85			// interpolation filter
 #define MIC_OUT_RATE		48000		// mic post-processing sample rate
 #define PA_LIST_SIZE 		16			// max number of pulseaudio devices
+#define QUISK_MAX_RECEIVERS	9			// max number of receiver channels
 
 // Test the audio: 0 == No test; normal operation;
 // 1 == Copy real data to the output; 2 == copy imaginary data to the output;
@@ -79,6 +80,7 @@ struct sound_dev {				// data for sound capture or playback device
 	int stream_dir_record;		// 1 for recording, 0 for playback
 	char server[IP_SIZE];		// server string for remote pulseaudio
 	int stream_format;			// format of pulseaudio device
+	int pulse_stream_state;		// state of the pulseaudio stream
 	volatile int cork_status;	// 1 for corked, 0 for uncorked
 } ;
 
@@ -152,6 +154,7 @@ extern int mic_max_display;		// display value of maximum microphone signal level
 extern int quiskSpotLevel;		// 0 for no spotting; else the level 10 to 1000
 extern int data_width;
 extern int quisk_using_udp;	// is a UDP port used for capture (0 or 1)?
+extern int quisk_rx_udp_started;		// have we received any data?
 extern int rxMode;				// mode CWL, USB, etc.
 extern int quisk_tx_tune_freq;	// Transmit tuning frequency as +/- sample_rate / 2
 extern PyObject * quisk_pyConfig;		// Configuration module instance
@@ -164,9 +167,15 @@ extern double quisk_audioVolume;		// volume control for radio sound playback, 0.
 extern int quiskImdLevel;				// level for rxMode IMD
 extern int quiskTxHoldState;			// state machine for Tx wait for repeater frequency shift
 extern double quisk_ctcss_freq;			// frequency in Hertz
-extern unsigned char quisk_pc_to_hermes[17 * 4];	// Data to send from the PC to the Hermes hardware
+extern unsigned char quisk_pc_to_hermes[17 * 4];		// Data to send from the PC to the Hermes hardware
+extern unsigned char quisk_hermeslite_writequeue[4 * 5];	// One-time writes to Hermes-Lite
+extern unsigned int quisk_hermeslite_writepointer;		// write pointer into write queue, nonzero value triggers writes, 
+extern unsigned int quisk_hermeslite_writeattempts;		// counter for write retries
+extern unsigned int quisk_hermes_code_version;			// Hermes code version from Hermes to PC
 extern int quisk_use_rx_udp;					// Method of access to UDP hardware
-extern complex double cRxFilterOut(complex double, int);
+extern complex double cRxFilterOut(complex double, int, int);
+extern int quisk_multirx_count;			// number of additional receivers zero or 1, 2, 3, ..
+extern struct sound_dev quisk_DigitalRx1Output;		// Output sound device for sub-receiver 1
 
 extern PyObject * quisk_set_spot_level(PyObject * , PyObject *);
 extern PyObject * quisk_get_tx_filter(PyObject * , PyObject *);
@@ -222,7 +231,7 @@ void quisk_file_microphone(complex double *, int);
 void quisk_file_playback(complex double *, int, double);
 void quisk_tmp_playback(complex double *, int, double);
 void quisk_hermes_tx_add(complex double *, int);
-void quisk_hermes_tx_send(void);
+void quisk_hermes_tx_send(int, int *);
 void quisk_udp_mic_error(char *);
 void quisk_check_freedv_mode(void);
 
@@ -242,6 +251,8 @@ int  quisk_read_portaudio(struct sound_dev *, complex double *);
 void quisk_play_portaudio(struct sound_dev *, int, complex double *, int, double);
 void quisk_start_sound_portaudio(struct sound_dev **, struct sound_dev **);
 void quisk_close_sound_portaudio(void);
+
+void play_sound_interface(struct sound_dev * , int, complex double * , int, double);
 
 int  quisk_read_pulseaudio(struct sound_dev *, complex double *);
 void quisk_play_pulseaudio(struct sound_dev *, int, complex double *, int, double);

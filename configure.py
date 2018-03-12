@@ -7,6 +7,7 @@ from types import *
 # Quisk will alter quisk_conf_defaults to include the user's config file.
 import quisk_conf_defaults as conf
 import _quisk as QS
+from quisk_widgets import QuiskBitField
 
 # Settings is [
 #   0: radio_requested, a string radio name or "Ask me" or "ConfigFileRadio"
@@ -73,14 +74,25 @@ class Configuration:
     # Fill in required values
     if radio_type == "SdrIQ":
       radio_dict["use_sdriq"] = '1'
+    elif radio_type == "Hermes":
+      radio_dict["hermes_bias_adjust"] = "False"
     else:
       radio_dict["use_sdriq"] = '0'
-    if radio_type not in ("HiQSDR", "Hermes", "Red Pitaya", "Odysey"):
+    if radio_type not in ("HiQSDR", "Hermes", "Red Pitaya", "Odyssey", "Odyssey2"):
       radio_dict["use_rx_udp"] = '0'
     # fill in conf from our configuration data; convert text items to Python objects
     errors = ''
     for k, v in radio_dict.items():
-      fmt = self.format4name[k]
+      if k == 'favorites_file_path':	# A null string is equivalent to "not entered"
+        if not v.strip():
+          continue
+      try:
+        fmt = self.format4name[k]
+      except:
+        errors = errors + "Ignore obsolete parameter %s\n" % k
+        del radio_dict[k]
+        self.settings_changed = True
+        continue
       k4 = k[0:4]
       if k4 == platform_ignore:
         continue
@@ -92,7 +104,9 @@ class Configuration:
         if i1 > 0:
           v = v[0:i1]
       try:
-        if fmt4 in ('text', 'dict', 'list'):	# Note: JSON returns Unicode strings !!!
+        if fmt4 == 'text':	# Note: JSON returns Unicode strings !!!
+          setattr(conf, k, str(v))
+        elif fmt4 in ('dict', 'list'):
           setattr(conf, k, v)
         elif fmt4 == 'inte':
           setattr(conf, k, int(v, base=0))
@@ -109,6 +123,11 @@ class Configuration:
           print ("Unknown format for", k, fmt)
       except:
         errors = errors + "Failed to set %s to %s using format %s\n" % (k, v, fmt)
+        #traceback.print_exc()
+    if conf.color_scheme == 'B':
+      conf.__dict__.update(conf.color_scheme_B)
+    elif conf.color_scheme == 'C':
+      conf.__dict__.update(conf.color_scheme_C)
     if errors:
       dlg = wx.MessageDialog(None, errors,
         'Update Settings', wx.OK|wx.ICON_ERROR)
@@ -183,8 +202,12 @@ class Configuration:
       if dct.has_key("BottomWidgets"):
         app.bottom_widgets = dct['BottomWidgets'](app, hardware, conf, frame, gbs, vertBox)
     return True
+  def OnPageChanging(self, event):
+    index = event.GetSelection()
+    if index >= self.radios_page_start:
+      page = self.notebk.GetPage(index)
+      page.MakePages()
   def AddPages(self, notebk, width):	# Called sixth to add pages Help, Radios, all radio names
-    #notebk.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self.OnPageChanged)
     global win_width
     win_width = width
     self.notebk = notebk
@@ -193,6 +216,10 @@ class Configuration:
     self.radio_page = Radios(notebk)
     notebk.AddPage(self.radio_page, "Radios")
     self.radios_page_start = notebk.GetPageCount()
+    if sys.platform == 'win32':		# On Windows, PAGE_CHANGING doesn't work
+      notebk.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self.OnPageChanging)
+    else:
+      notebk.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGING, self.OnPageChanging)
     for name in Settings[2]:
       page = RadioNotebook(notebk, name)
       if name == Settings[1]:
@@ -223,6 +250,7 @@ class Configuration:
       for data_name, text, fmt, help_text, values in data:
         radio_dict[data_name] = values[0]
     page = RadioNotebook(self.notebk, radio_name)
+    page.MakePages()
     self.notebk.AddPage(page, radio_name)
     return True
   def RenameRadio(self, old, new):
@@ -409,12 +437,15 @@ class ConfigHelp(wx.html.HtmlWindow):	# The "Help with Radios" first-level page
 class RadioNotebook(wx.Notebook):	# The second-level notebook for each radio name
   def __init__(self, parent, radio_name):
     wx.Notebook.__init__(self, parent)
-    #self.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self.OnPageChanged)
     font = wx.Font(conf.config_font_size, wx.FONTFAMILY_SWISS, wx.NORMAL,
           wx.FONTWEIGHT_NORMAL, face=conf.quisk_typeface)
     self.SetFont(font)
-    # create the page windows
+    self.radio_name = radio_name
     self.pages = []
+  def MakePages(self):
+    if self.pages:
+      return
+    radio_name = self.radio_name
     page = RadioHardware(self, radio_name)
     self.AddPage(page, "Hardware")
     self.pages.append(page)
@@ -431,6 +462,7 @@ class RadioNotebook(wx.Notebook):	# The second-level notebook for each radio nam
     self.AddPage(page, "Bands")
     self.pages.append(page)
   def NewName(self, new_name):
+    self.radio_name = new_name
     for page in self.pages:
       page.radio_name = new_name
 
@@ -561,6 +593,15 @@ class BaseWindow(ScrolledPanel):
     else:
       self.gbs.Add(c, (self.row, col), span=(1, span), flag=wx.ALIGN_CENTER_VERTICAL)
     return c
+  def AddTextC(self, col, text, span=None):
+    c = wx.StaticText(self, -1, text)
+    if col < 0:
+      pass
+    elif span is None:
+      self.gbs.Add(c, (self.row, col), flag=wx.ALIGN_CENTER)
+    else:
+      self.gbs.Add(c, (self.row, col), span=(1, span), flag=wx.ALIGN_CENTER)
+    return c
   def AddTextCHelp(self, col, text, help_text, span=None):
     bsizer = wx.BoxSizer(wx.HORIZONTAL)
     txt = wx.StaticText(self, -1, text)
@@ -571,7 +612,7 @@ class BaseWindow(ScrolledPanel):
     h = self.quisk_height + 2
     btn.SetSizeHints(h, h, h, h)
     btn.Bind(wx.EVT_BUTTON, self._BTnHelp)
-    bsizer.Add(btn, flag=wx.ALIGN_CENTER_VERTICAL|wx.LEFT, border=self.charx)
+    bsizer.Add(btn, flag=wx.ALIGN_CENTER_VERTICAL|wx.LEFT|wx.RIGHT, border=self.charx)
     if col < 0:
       pass
     elif span is None:
@@ -609,6 +650,17 @@ class BaseWindow(ScrolledPanel):
     if handler:
       btn.Bind(wx.EVT_CHECKBOX, handler)
     return btn
+  def AddBitField(self, col, number, name, band, value, handler=None, span=None, border=1):
+    bf = QuiskBitField(self, number, value, self.quisk_height, handler)
+    if col < 0:
+      pass
+    elif span is None:
+      self.gbs.Add(bf, (self.row, col), flag=wx.ALIGN_RIGHT|wx.ALIGN_CENTER_VERTICAL|wx.RIGHT|wx.LEFT, border=border*self.charx)
+    else:
+      self.gbs.Add(bf, (self.row, col), span=(1, span), flag=wx.ALIGN_RIGHT|wx.ALIGN_CENTER_VERTICAL|wx.RIGHT|wx.LEFT, border=border*self.charx)
+    bf.quisk_data_name = name
+    bf.quisk_band = band
+    return bf
   def AddPushButton(self, col, text, border=0):
     #btn = wx.Button(self, -1, text, style=wx.BU_EXACTFIT)
     btn = wx.lib.buttons.GenButton(self, -1, text)
@@ -647,9 +699,10 @@ class BaseWindow(ScrolledPanel):
     else:
       cb = self.AddComboCtrl(col, value, choices, right, no_edit)
     return c, cb
-  def AddTextComboHelp(self, col, text, value, choices, help_text, no_edit=False, border=2):
+  def AddTextComboHelp(self, col, text, value, choices, help_text, no_edit=False, border=2, span_text=1, span_combo=1):
     txt = wx.StaticText(self, -1, text)
-    self.gbs.Add(txt, (self.row, col), flag=wx.ALIGN_CENTER_VERTICAL|wx.RIGHT, border=self.charx)
+    self.gbs.Add(txt, (self.row, col), span=(1, span_text), flag=wx.ALIGN_CENTER_VERTICAL|wx.RIGHT, border=self.charx)
+    col += span_text
     cb = self.AddComboCtrl(-1, value, choices, False, no_edit)
     if no_edit:
       l = len(value)
@@ -659,17 +712,37 @@ class BaseWindow(ScrolledPanel):
           break
       else:
         print ("Failure to set value for", text, value, choices)
-    self.gbs.Add(cb, (self.row, col+1),
+    self.gbs.Add(cb, (self.row, col), span=(1, span_combo),
        flag=wx.ALIGN_RIGHT|wx.ALIGN_CENTER_VERTICAL|wx.EXPAND|wx.RIGHT,
        border=self.charx*2/10)
+    col += span_combo
     btn = wx.Button(self, -1, "..")
     btn.quisk_help_text = help_text
     btn.quisk_caption = text
     h = self.quisk_height + 2
     btn.SetSizeHints(h, h, h, h)
-    self.gbs.Add(btn, (self.row, col+2), flag=wx.ALIGN_CENTER_VERTICAL|wx.RIGHT, border=self.charx*border)
+    self.gbs.Add(btn, (self.row, col), flag=wx.ALIGN_CENTER_VERTICAL|wx.RIGHT, border=self.charx*border)
     btn.Bind(wx.EVT_BUTTON, self._BTnHelp)
     return txt, cb, btn
+  def AddTextSpinnerHelp(self, col, text, value, imin, imax, help_text, border=2, span_text=1, span_spinner=1):
+    txt = wx.StaticText(self, -1, text)
+    self.gbs.Add(txt, (self.row, col), span=(1, span_text), flag=wx.ALIGN_CENTER_VERTICAL|wx.RIGHT, border=self.charx)
+    col += span_text
+    spn = wx.SpinCtrl(self, -1, "")
+    spn.SetRange(imin, imax)
+    spn.SetValue(value)
+    self.gbs.Add(spn, (self.row, col), span=(1, span_spinner),
+       flag=wx.ALIGN_RIGHT|wx.ALIGN_CENTER_VERTICAL|wx.EXPAND|wx.RIGHT,
+       border=self.charx*2/10)
+    col += span_spinner
+    btn = wx.Button(self, -1, "..")
+    btn.quisk_help_text = help_text
+    btn.quisk_caption = text
+    h = self.quisk_height + 2
+    btn.SetSizeHints(h, h, h, h)
+    self.gbs.Add(btn, (self.row, col), flag=wx.ALIGN_CENTER_VERTICAL|wx.RIGHT, border=self.charx*border)
+    btn.Bind(wx.EVT_BUTTON, self._BTnHelp)
+    return txt, spn, btn
   def _BTnHelp(self, event):
     btn = event.GetEventObject()
     dlg = wx.MessageDialog(self, btn.quisk_help_text, btn.quisk_caption, style=wx.OK|wx.ICON_INFORMATION)
@@ -679,12 +752,26 @@ class BaseWindow(ScrolledPanel):
     value = ctrl.GetValue()
     self.OnChange2(ctrl, value)
   def OnChange2(self, ctrl, value):
+    # Careful: value is Unicode
     name = ctrl.quisk_data_name
     fmt4 = local_conf.format4name[name][0:4]
     if self.FormatOK(value, fmt4):
       radio_dict = local_conf.GetRadioDict(self.radio_name)
       radio_dict[name] = value
       local_conf.settings_changed = True
+      # Immediate changes
+      if name == 'hermes_lowpwr_tr_enable':
+        value = (value == "True")
+        application.Hardware.SetLowPwrEnable(value)
+      elif name == 'hermes_power_amp':
+        value = (value == "True")
+        application.Hardware.EnablePowerAmp(value)
+      elif name == "hermes_bias_adjust":
+        value = (value == "True")
+        self.HermesBias0.Enable(value)
+        self.HermesBias1.Enable(value)
+        self.HermesWriteBiasButton.Enable(value)
+        application.Hardware.EnableBiasChange(value)
   def FormatOK(self, value, fmt4):		# Check formats integer and number
     i1 = value.find('#')
     try:
@@ -700,8 +787,8 @@ class BaseWindow(ScrolledPanel):
           v = float(value)
     except:
       dlg = wx.MessageDialog(None,
-        "Can not set %s with format %s to value %s" % (name, local_conf.format4name[name], value),
-        'Change to item %s' % name, wx.OK|wx.ICON_ERROR)
+        "Can not set item with format %s to value %s" % (fmt4, value),
+        'Change to item', wx.OK|wx.ICON_ERROR)
       dlg.ShowModal()
       dlg.Destroy()
       return False
@@ -721,8 +808,11 @@ class BaseWindow(ScrolledPanel):
     except:
       fmt = ''		# not all items in conf are in section_data or receiver_data
     try:
-      if fmt in ('dict', 'list'):
-        value = getattr(conf, name)
+      if fmt == 'dict':				# make a copy for this radio
+        value = {}
+        value.update(getattr(conf, name))
+      elif fmt == 'list':			# make a copy for this radio
+        value = getattr(conf, name)[:]
       else:
         value = str(getattr(conf, name))
     except:
@@ -769,8 +859,6 @@ class Radios(BaseWindow):	# The "Radios" first-level page
     item = self.AddTextL(1, "Restart Quisk with new settings")
     item = self.AddPushButton(2, "Restart Quisk", 1)
     self.Bind(wx.EVT_BUTTON, self.OnBtnRestart, item)
-    #if application.pulse_in_use:
-        #item.Enable(False)	# Pulse requires a program exit to clean up
     self.NextRow()
     self.Fit()
     self.SetupScrolling()
@@ -872,28 +960,55 @@ class RadioSection(BaseWindow):		# The pages for each section in the second-leve
     self.names = names
     self.num_cols = 8
     #self.MarkCols()
-    self.NextRow()
+    self.NextRow(3)
     col = 1
     radio_dict = local_conf.GetRadioDict(radio_name)
     for name, text, fmt, help_text, values in self.names:
-      if fmt[0:4] in ('dict', 'list'):
-        continue
-      if name[0:4] == platform_ignore:
-        continue
-      value = self.GetValue(name, radio_dict)
-      no_edit = "choice" in fmt or fmt == 'boolean'
-      txt, cb, btn = self.AddTextComboHelp(col, text, value, values, help_text, no_edit)
-      cb.handler = self.OnChange
-      cb.quisk_data_name = name
-      if col == 1:
-        col = 4
+      if name == 'favorites_file_path':
+        self.favorites_path = radio_dict.get('favorites_file_path', '')
+        row = self.row
+        self.row = 1
+        item, self.favorites_combo, btn = self.AddTextComboHelp(1, text, self.favorites_path, values, help_text, False, span_text=1, span_combo=4)
+        self.favorites_combo.handler = self.OnButtonChangeFavorites
+        item = self.AddPushButtonR(7, "Change..", border=0)
+        item.Bind(wx.EVT_BUTTON, self.OnButtonChangeFavorites)
+        self.row = row
       else:
-        col = 1
-        self.NextRow()
+        if fmt[0:4] in ('dict', 'list'):
+          continue
+        if name[0:4] == platform_ignore:
+          continue
+        value = self.GetValue(name, radio_dict)
+        no_edit = "choice" in fmt or fmt == 'boolean'
+        txt, cb, btn = self.AddTextComboHelp(col, text, value, values, help_text, no_edit)
+        cb.handler = self.OnChange
+        cb.quisk_data_name = name
+        if col == 1:
+          col = 4
+        else:
+          col = 1
+          self.NextRow()
     self.AddColSpacer(2, 20)
     self.AddColSpacer(5, 20)
     self.Fit()
     self.SetupScrolling()
+  def OnButtonChangeFavorites(self, event):
+    if isinstance(event, ComboCtrl):
+      path = event.GetValue()
+    else:
+      direc, fname = os.path.split(getattr(conf, 'favorites_file_in_use'))
+      dlg = wx.FileDialog(None, "Choose Favorites File", direc, fname, "*.txt", wx.OPEN)
+      if dlg.ShowModal() == wx.ID_OK:
+        path = dlg.GetPath()
+        self.favorites_combo.SetText(path)
+        dlg.Destroy()
+      else:
+        dlg.Destroy()
+        return
+    path = path.strip()
+    self.favorites_path = path
+    local_conf.GetRadioDict(self.radio_name)["favorites_file_path"] = path
+    local_conf.settings_changed = True
 
 class RadioHardware(BaseWindow):		# The Hardware page in the second-level notebook for each radio
   def __init__(self, parent, radio_name):
@@ -915,8 +1030,7 @@ class RadioHardware(BaseWindow):		# The Hardware page in the second-level notebo
         self.hware_path = self.GetValue(name, radio_dict)
         row = self.row
         self.row = 3
-        item = self.AddTextL(1, "The hardware file for this radio is ", span=2)
-        self.hware_combo = self.AddComboCtrl(3, self.hware_path, values, span=4, border=0)
+        item, self.hware_combo, btn = self.AddTextComboHelp(1, text, self.hware_path, values, help_text, False, span_text=1, span_combo=4)
         self.hware_combo.handler = self.OnButtonChangeHardware
         item = self.AddPushButtonR(7, "Change..", border=0)
         item.Bind(wx.EVT_BUTTON, self.OnButtonChangeHardware)
@@ -925,8 +1039,7 @@ class RadioHardware(BaseWindow):		# The Hardware page in the second-level notebo
         self.widgets_path = self.GetValue(name, radio_dict)
         row = self.row
         self.row = 5
-        item = self.AddTextL(1, "The widgets file for this radio is ", span=2)
-        self.widgets_combo = self.AddComboCtrl(3, self.widgets_path, values, span=4, border=0)
+        item, self.widgets_combo, btn = self.AddTextComboHelp(1, text, self.widgets_path, values, help_text, False, span_text=1, span_combo=4)
         self.widgets_combo.handler = self.OnButtonChangeWidgets
         item = self.AddPushButtonR(7, "Change..", border=0)
         item.Bind(wx.EVT_BUTTON, self.OnButtonChangeWidgets)
@@ -948,6 +1061,22 @@ class RadioHardware(BaseWindow):		# The Hardware page in the second-level notebo
           col = 1
           border = 2
           self.NextRow()
+    if radio_type == "Hermes":
+      if col == 4:
+        self.NextRow()
+      help_text = ('This controls the bias level for transistors in the final power amplifier.  Enter a level from 0 to 255.'
+      '  These changes are temporary.  Press the "Write" button to write the value to the hardware and make it permanent.')
+      ## Bias is 0 indexed to match schematic
+      txt, self.HermesBias0, btn = self.AddTextSpinnerHelp(1, "Power amp bias 0", 0, 0, 255, help_text)
+      txt, self.HermesBias1, btn = self.AddTextSpinnerHelp(4, "Power amp bias 1", 0, 0, 255, help_text)
+      enbl = radio_dict["hermes_bias_adjust"] == "True"
+      self.HermesBias0.Enable(enbl)
+      self.HermesBias1.Enable(enbl)
+      self.HermesBias0.Bind(wx.EVT_SPINCTRL, self.OnHermesChangeBias0)
+      self.HermesBias1.Bind(wx.EVT_SPINCTRL, self.OnHermesChangeBias1)
+      self.HermesWriteBiasButton = self.AddPushButton(7, "Write", border=0)
+      self.HermesWriteBiasButton.Enable(enbl)
+      self.HermesWriteBiasButton.Bind(wx.EVT_BUTTON, self.OnButtonHermesWriteBias)
     self.AddColSpacer(2, 20)
     self.AddColSpacer(5, 20)
     self.Fit()
@@ -986,6 +1115,17 @@ class RadioHardware(BaseWindow):		# The Hardware page in the second-level notebo
     self.widgets_path = path
     local_conf.GetRadioDict(self.radio_name)["widgets_file_name"] = path
     local_conf.settings_changed = True
+  def OnHermesChangeBias0(self, event):
+    value = self.HermesBias0.GetValue()
+    application.Hardware.ChangeBias0(value)
+  def OnHermesChangeBias1(self, event):
+    value = self.HermesBias1.GetValue()
+    application.Hardware.ChangeBias1(value)
+  def OnButtonHermesWriteBias(self, event):
+    value0 = self.HermesBias0.GetValue()
+    value1 = self.HermesBias1.GetValue()
+    application.Hardware.WriteBias(value0, value1)
+
 
 class RadioSound(BaseWindow):		# The Sound page in the second-level notebook for each radio
   """Configure the available sound devices."""
@@ -997,6 +1137,7 @@ class RadioSound(BaseWindow):		# The Sound page in the second-level notebook for
     ('', '', '', '', 'digital_input_name'),
     ('', '', '', '', 'digital_output_name'),
     ('', '', '', '', 'sample_playback_name'),
+    ('', '', '', '', 'digital_rx1_name'),
     )
   def __init__(self, parent, radio_name):
     BaseWindow.__init__(self, parent)
@@ -1043,8 +1184,9 @@ class RadioSound(BaseWindow):		# The Sound page in the second-level notebook for
 "I/Q sample input is the sample source if it comes from a sound device, such as a SoftRock.  Otherwise, leave it blank.  "
 "I/Q Tx output is the transmit sample source from a SoftRock.  Otherwise leave it blank.  "
 "Digital input is the loopback sound device attached to a digital program such as FlDigi.  "
-"Digital output is loopback sound device to send Tx samples to a digital program such as FlDigi.  "
-"I/Q sample output sends the received I/Q data to another program.")
+"Digital output is the loopback sound device to send Tx samples to a digital program such as FlDigi.  "
+"I/Q sample output sends the received I/Q data to another program.  "
+"Digital Rx1 Output is the loopback sound device to send sub-receiver 1 output to another program.")
     self.AddTextCHelp(2, "Rate",
 "This is the sample rate for the device in Hertz." "Some devices have fixed rates that can not be changed.")
     self.AddTextCHelp(3, "Ch I", "This is the in-phase channel for devices with I/Q data, and the main channel for other devices.")
@@ -1056,7 +1198,7 @@ class RadioSound(BaseWindow):		# The Sound page in the second-level notebook for
 "For Linux you can use the Alsa device, the PortAudio device or the PulseAudio device.  "
 "The Alsa device are recommended because they have lower latency.  See the documentation for more information.")
     self.NextRow()
-    labels = ("Radio Audio Output", "Microphone Input", "I/Q Sample Input", "I/Q Tx Output", "Digital Input", "Digital Output", "I/Q Sample Output")
+    labels = ("Radio Audio Output", "Microphone Input", "I/Q Sample Input", "I/Q Tx Output", "Digital Input", "Digital Output", "I/Q Sample Output", "Digital Rx1 Output")
     choices = (("48000", "96000", "192000"), ("0", "1"), ("0", "1"), (" ", "0", "1"))
     r = 0
     if "SoftRock" in self.radio_dict['hardware_file_type']:		# Samples come from sound card
@@ -1093,6 +1235,9 @@ class RadioSound(BaseWindow):		# The Sound page in the second-level notebook for
         cb = self.AddComboCtrl(2, "48000", choices=("48000",), right=True, no_edit=True)
         cb.Enable(False)
       if r == 6:
+        cb = self.AddComboCtrl(2, "48000", choices=("48000",), right=True, no_edit=True)
+        cb.Enable(False)
+      if r == 7:
         cb = self.AddComboCtrl(2, "48000", choices=("48000",), right=True, no_edit=True)
         cb.Enable(False)
       cb.handler = self.OnChange
@@ -1181,6 +1326,15 @@ class RadioBands(BaseWindow):		# The Bands page in the second-level notebook for
     else:
       tx_level = None
     try:
+      transverter_offset = radio_dict['bandTransverterOffset']
+    except:
+      transverter_offset = {}
+      radio_dict['bandTransverterOffset'] = transverter_offset     # Make sure the dictionary is in radio_dict
+    else:
+      for band in transverter_offset.keys():
+        if band not in band_list:
+          band_list.append(band)
+    try:
       hiqsdr_bus = radio_dict['HiQSDR_BandDict']
     except:
       hiqsdr_bus = None
@@ -1198,7 +1352,7 @@ class RadioBands(BaseWindow):		# The Bands page in the second-level notebook for
           band_list.append(band)
     band_list.sort(self.SortCmp)
     self.band_checks = []
-    # Add the Audio band
+    # Add the Audio band.  This must be first to allow for column labels.
     cb = self.AddCheckBox(1, 'Audio', self.OnChangeBands)
     self.band_checks.append(cb)
     if 'Audio' in band_labels:
@@ -1231,7 +1385,7 @@ class RadioBands(BaseWindow):		# The Bands page in the second-level notebook for
       col += 1
       self.row = heading_row
       self.AddTextCHelp(col, "    Tx Level",
-"This is the transmit level for each band.  The level is a number from zero to 255.")
+"This is the transmit level for each band.  The level is a number from zero to 255.  Changes are immediate.")
       self.row = start_row
       for band in band_list:
         try:
@@ -1250,12 +1404,35 @@ class RadioBands(BaseWindow):		# The Bands page in the second-level notebook for
         cb.quisk_data_name = 'tx_level'
         cb.quisk_band = band
         self.NextRow()
-    # Add hiqsdr_bus
-    if hiqsdr_bus is not None:
+    # Add transverter offset
+    if type(transverter_offset) is DictType:
       col += 1
       self.row = heading_row
-      self.AddTextCHelp(col, "    IO Bus",
-"This is the value to set on the IO bus for each band.  It may be used to select filters.")
+      self.AddTextCHelp(col, "    Transverter Offset",
+"If you use a transverter, you need to tune your hardware to a frequency lower than\
+ the frequency displayed by Quisk.  For example, if you have a 2 meter transverter,\
+ you may need to tune your hardware from 28 to 30 MHz to receive 144 to 146 MHz.\
+ Enter the transverter offset in Hertz.  For this to work, your\
+ hardware must support it.  Currently, the HiQSDR, SDR-IQ and SoftRock are supported.")
+      self.row = start_row
+      for band in band_list:
+        try:
+          offset = transverter_offset[band]
+        except:
+          offset = ''
+        else:
+          offset = str(offset)
+        cb = self.AddComboCtrl(col, offset, choices=(offset, ), right=True)
+        cb.handler = self.OnChangeDictBlank
+        cb.quisk_data_name = 'bandTransverterOffset'
+        cb.quisk_band = band
+        self.NextRow()
+    # Add hiqsdr_bus
+    if hiqsdr_bus is not None:
+      bus_text = 'The IO bus is used to select filters for each band.  Refer to the documentation for your filter board to see what number to enter.'
+      col += 1
+      self.row = heading_row
+      self.AddTextCHelp(col, "    IO Bus", bus_text)
       self.row = start_row
       for band in band_list:
         try:
@@ -1273,27 +1450,22 @@ class RadioBands(BaseWindow):		# The Bands page in the second-level notebook for
         self.NextRow()
     # Add hermes_bus
     if hermes_bus is not None:
+      bus_text = 'The IO bus is used to select filters for each band.  Check the bit for a "1", and uncheck the bit for a "0".\
+  Bits are numbered from zero.  For example, decimal 9 is 0b1001, so check bits 3 and 0.\
+  Changes are immediate (no need to restart).\
+  Refer to the documentation for your filter board to see which bits to set.'
       col += 1
       self.row = heading_row
-      self.AddTextCHelp(col, "    IO Bus",
-"This is the value to set on the IO bus for each band.  It may be used to select filters.")
+      self.AddTextCHelp(col, "    IO Bus", bus_text)
+      self.row += 1
+      self.AddTextC(col, "6...Bits...0")
       self.row = start_row
       for band in band_list:
         try:
-          bus = hermes_bus[band]
+          bus = int(hermes_bus[band])
         except:
-          bus = ''
-          bus_choice = ('11', '0x0B', '0b00001011')
-        else:
-          #b1 = "0b%b" % bus
-          b1 = "0x%X" % bus
-          b2 = str(bus)
-          bus_choice = (b1, b2, '0b00000001')
-          bus = b1
-        cb = self.AddComboCtrl(col, bus, bus_choice, right=True)
-        cb.handler = self.OnChangeDict
-        cb.quisk_data_name = 'Hermes_BandDict'
-        cb.quisk_band = band
+          bus = 0
+        self.AddBitField(col, 7, 'Hermes_BandDict', band, bus, self.ChangeIO)
         self.NextRow()
     # Add the Time band
     cb = self.AddCheckBox(1, 'Time', self.OnChangeBands)
@@ -1381,3 +1553,27 @@ class RadioBands(BaseWindow):		# The Bands page in the second-level notebook for
       value = int(value)
       dct[band] = value
       local_conf.settings_changed = True
+      if ctrl.quisk_data_name == 'tx_level' and hasattr(application.Hardware, "SetTxLevel"):
+        application.Hardware.SetTxLevel()
+  def OnChangeDictBlank(self, ctrl):
+    radio_dict = local_conf.GetRadioDict(self.radio_name)
+    dct = radio_dict[ctrl.quisk_data_name]
+    band = ctrl.quisk_band
+    value = ctrl.GetValue()
+    value = value.strip()
+    if not value:
+      if dct.has_key(band):
+        del dct[band]
+        local_conf.settings_changed = True
+    elif self.FormatOK(value, 'inte'):
+      value = int(value)
+      dct[band] = value
+      local_conf.settings_changed = True
+  def ChangeIO(self, control):
+    radio_dict = local_conf.GetRadioDict(self.radio_name)
+    dct = radio_dict[control.quisk_data_name]
+    band = control.quisk_band
+    dct[band] = control.value
+    local_conf.settings_changed = True
+    if hasattr(application.Hardware, "NewBandDict"):
+      application.Hardware.NewBandDict(band)

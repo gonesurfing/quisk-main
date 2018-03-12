@@ -31,6 +31,25 @@ int QuiskGetConfigInt(const char * name, int deflt)
   return deflt;		// failure
 }
 
+int QuiskGetConfigBoolean(const char * name, int deflt)		// UNTESTED
+{  //  Return 1 for True, 0 for False.  Return deflt for failure.
+  int res;
+  PyObject * attr;  
+  if (!quisk_pyConfig || PyErr_Occurred()) {
+    return deflt;
+  }
+  attr = PyObject_GetAttrString(quisk_pyConfig, name);
+  if (attr) {
+    res = PyObject_IsTrue(attr);
+    Py_DECREF(attr);
+    return res;		// success
+  }
+  else {
+    PyErr_Clear();
+  }
+  return deflt;		// failure
+}
+
 double QuiskGetConfigDouble(const char * name, double deflt)
 {  // return deflt for failure.  Accept int or float.
   double res;
@@ -167,8 +186,13 @@ void QuiskMeasureRate(const char * msg, int count)
 	static int total;
 	static double time0=0, time_pr;
 
+	if ( ! msg) {	// init
+		time0 = 0;
+		return;
+	}
 	if (count && time0 == 0) {		// init
 		time0 = time_pr = QuiskTimeSec();
+		total = 0;
 		return;
 	}
 	if (time0 == 0)

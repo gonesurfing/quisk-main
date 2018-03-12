@@ -59,13 +59,12 @@ static double TxCorrectLevel;
 static complex TxCorrectDc;
 
 // Used for the Hermes protocol
-#define HERMES_TX_BUF_SAMPLES	4800
+#define HERMES_TX_BUF_SAMPLES	4800	// buffer size in I/Q samples (two shorts)
 #define HERMES_TX_BUF_SHORTS	(HERMES_TX_BUF_SAMPLES * 2)
 static int hermes_read_index;			// index to read from buffer
 static int hermes_write_index;			// index to write to buffer
 static int hermes_num_samples;			// number of samples in the buffer
-static int hermes_started;				// Have we received any Rx samples yet?
-static short hermes_buf[HERMES_TX_BUF_SHORTS];		// buffer
+static short hermes_buf[HERMES_TX_BUF_SHORTS];		// buffer to store Tx I/Q samples waiting to be sent at 48 ksps
 
 #define TX_BLOCK_SHORTS		600		// transmit UDP packet with this many shorts (two bytes) (perhaps + 1)
 #define MIC_MAX_HOLD_TIME	400		// Time to hold the maximum mic level on the Status screen in milliseconds
@@ -702,26 +701,10 @@ PyObject * quisk_get_tx_filter(PyObject * self, PyObject * args)
 // All samples are 2 bytes.  The 1032 byte UDP packet contains 63*2 radio sound samples, and 63*2 mic I/Q samples.
 // Samples are sent synchronously with the input samples.
 
-static void quisk_hermes_add_zeros(void)
-{	// Add zeros to the buffer
-	int i, tx_count;
-
-	tx_count = HERMES_TX_BUF_SAMPLES / 2;
-	hermes_num_samples += tx_count;
-	for (i = 0; i < tx_count; i++) {
-		hermes_buf[hermes_write_index++] = 0;
-		hermes_buf[hermes_write_index++] = 0;
-		if (hermes_write_index >= HERMES_TX_BUF_SHORTS)
-			hermes_write_index = 0;
-	}
-}
-
 void quisk_hermes_tx_add(complex double * cSamples, int tx_count)
 {	// Add samples to the Tx buffer
 	int i;
 
-	if (hermes_started == 0)
-		return;			// do not add samples until Rx starts
 	if (hermes_num_samples + tx_count >= HERMES_TX_BUF_SAMPLES) {	// no more space; throw away half the samples
 		quisk_udp_mic_error("Tx hermes buffer overflow");
 		//printf("Tx hermes buffer overflow\n");
@@ -750,100 +733,141 @@ void quisk_hermes_tx_add(complex double * cSamples, int tx_count)
 	}
 }
 
-void quisk_hermes_tx_send(void)
-{	// Send samples using the Metis-Hermes protocol.  This quisk_hermes_tx_send() is called for each block received.
+void quisk_hermes_tx_send(int tx_socket, int * tx_records)
+{	// Send mic samples using the Metis-Hermes protocol.  Timing is from blocks received, rate is 48k.
 	int i, offset, key_down, sent, ratio;
 	short s;
 	unsigned char sendbuf[1032];
 	unsigned char * pt_buf;
 	static unsigned int seq = 0;
 	static unsigned char C0_index = 0;
-	static int num_blocks = 0;
+	unsigned int hlwp = 0;
 
-	if (hermes_started == 0) {		// we received some Rx samples
-		hermes_started = 1;
-		quisk_hermes_add_zeros();		// fill buffer half full
+	if (tx_records == NULL) {
+		seq = 0;
+		C0_index = 0;
+		hermes_read_index = 0;
+		hermes_write_index = 0;
+		hermes_num_samples = 0;
+		quisk_hermes_tx_add(NULL, HERMES_TX_BUF_SAMPLES / 2);
+		return;
 	}
+	ratio = quisk_sound_state.sample_rate / 48000;		// send rate is 48 ksps
+	//printf ("quisk_hermes_tx_send ratio %d count %d\n", ratio, *tx_records);
+	if (*tx_records / ratio < 63 * 2)		// tx_records is the number of samples received for each receiver
+		return;
+	// Send 63*2 Tx samples with control bytes
 	//printf ("Buffer usage %.1f %%\n", 100.0 * hermes_num_samples / HERMES_TX_BUF_SAMPLES);
-	// Transmit samples as rx samples are received; receive at sample_rate, transmit at 48000
-	ratio = quisk_sound_state.sample_rate / 48000;
-	if (++num_blocks >= ratio) {
-		num_blocks = 0;
-		if (hermes_num_samples < 63 * 2) {	// Not enough samples to send
-			//printf("Tx hermes buffer   underflow\n");
-			quisk_udp_mic_error("Tx hermes buffer underflow");
-			quisk_hermes_add_zeros();
+	//printf ("Tx  quisk_hermes_tx_send ratio %d, count %d, samples %d\n", ratio, *tx_records, hermes_num_samples);
+	*tx_records -= 63 * 2 * ratio;
+	if (hermes_num_samples < 63 * 2) {	// Not enough samples to send
+		//printf("Tx hermes buffer underflow\n");
+		quisk_udp_mic_error("Tx hermes buffer underflow");
+		quisk_hermes_tx_add(NULL, HERMES_TX_BUF_SAMPLES / 2);
+	}
+	hermes_num_samples -= 63 * 2;
+	sendbuf[0] = 0xEF;
+	sendbuf[1] = 0xFE;
+	sendbuf[2] = 0x01;
+	sendbuf[3] = 0x02;
+	sendbuf[4] = seq >> 24 & 0xFF;
+	sendbuf[5] = seq >> 16 & 0xFF;
+	sendbuf[6] = seq >> 8 & 0xFF;
+	sendbuf[7] = seq & 0xFF;
+	seq++;
+	sendbuf[8] = 0x7F;
+	sendbuf[9] = 0x7F;
+	sendbuf[10] = 0x7F;
+	offset = C0_index * 4;		// offset into quisk_pc_to_hermes is C0[7:1] * 4
+	if (quisk_is_key_down())
+		key_down = 1;
+	else
+		key_down = 0;
+	sendbuf[11] = C0_index << 1 | key_down;			// C0
+	sendbuf[12] = quisk_pc_to_hermes[offset++];		// C1
+	sendbuf[13] = quisk_pc_to_hermes[offset++];		// C2
+	sendbuf[14] = quisk_pc_to_hermes[offset++];		// C3
+	sendbuf[15] = quisk_pc_to_hermes[offset++];		// C4
+	if (C0_index == 0)	// Do not change receiver count without stopping Hermes and restarting
+		sendbuf[15] = quisk_multirx_count << 3 | 0x04;	// Send the old count, not the changed count
+	if (++C0_index > 11)
+		C0_index = 0;
+	pt_buf = sendbuf + 16;
+	for (i = 0; i < 63; i++) {		// add 63 samples
+		*pt_buf++ = 0x00;			// Left/Right audio sample
+		*pt_buf++ = 0x00;
+		*pt_buf++ = 0x00;
+		*pt_buf++ = 0x00;
+		s = hermes_buf[hermes_read_index++];
+		*pt_buf++ = (s >> 8) & 0xFF;		// Two bytes of I
+		*pt_buf++ = s & 0xFF;
+		s = hermes_buf[hermes_read_index++];
+		*pt_buf++ = (s >> 8) & 0xFF;		// Two bytes of Q
+		*pt_buf++ = s & 0xFF;
+		if (hermes_read_index >= HERMES_TX_BUF_SHORTS)
+			hermes_read_index = 0;
+	}
+	sendbuf[520] = 0x7F;
+	sendbuf[521] = 0x7F;
+	sendbuf[522] = 0x7F;
+
+	// Changes for HermesLite v2 thanks to Steve, KF7O
+	if ((quisk_hermeslite_writepointer > 0) && (quisk_hermeslite_writeattempts++ % 8 == 0)) {
+
+		// Only send periodic hermeslite writes in second part of frame
+		hlwp = 5*(quisk_hermeslite_writepointer-1);
+		sendbuf[523] = quisk_hermeslite_writequeue[hlwp++] << 1 | key_down;
+		sendbuf[524] = quisk_hermeslite_writequeue[hlwp++];
+		sendbuf[525] = quisk_hermeslite_writequeue[hlwp++];
+		sendbuf[526] = quisk_hermeslite_writequeue[hlwp++];
+		sendbuf[527] = quisk_hermeslite_writequeue[hlwp++];
+
+		if ((sendbuf[523] & 0x80) == 0) {
+			// No acknowledge requested so fire and forget
+			quisk_hermeslite_writepointer--;
+			quisk_hermeslite_writeattempts = 0;	
 		}
-		hermes_num_samples -= 63 * 2;
-		sendbuf[0] = 0xEF;
-		sendbuf[1] = 0xFE;
-		sendbuf[2] = 0x01;
-		sendbuf[3] = 0x02;
-		sendbuf[4] = seq >> 24 & 0xFF;
-		sendbuf[5] = seq >> 16 & 0xFF;
-		sendbuf[6] = seq >> 8 & 0xFF;
-		sendbuf[7] = seq & 0xFF;
-		seq++;
-		sendbuf[8] = 0x7F;
-		sendbuf[9] = 0x7F;
-		sendbuf[10] = 0x7F;
+	} else {
 		offset = C0_index * 4;		// offset into quisk_pc_to_hermes is C0[7:1] * 4
-		if (quisk_is_key_down())
-			key_down = 1;
-		else
-			key_down = 0;
-		sendbuf[11] = C0_index << 1 | key_down;			// C0
-		sendbuf[12] = quisk_pc_to_hermes[offset++];		// C1
-		sendbuf[13] = quisk_pc_to_hermes[offset++];		// C2
-		sendbuf[14] = quisk_pc_to_hermes[offset++];		// C3
-		sendbuf[15] = quisk_pc_to_hermes[offset++];		// C4
-		if (++C0_index > 16)
-			C0_index = 0;
-		pt_buf = sendbuf + 16;
-		for (i = 0; i < 63; i++) {		// add 63 samples
-			*pt_buf++ = 0x00;			// Left/Right audio sample
-			*pt_buf++ = 0x00;
-			*pt_buf++ = 0x00;
-			*pt_buf++ = 0x00;
-			s = hermes_buf[hermes_read_index++];
-			*pt_buf++ = (s >> 8) & 0xFF;		// Two bytes of I
-			*pt_buf++ = s & 0xFF;
-			s = hermes_buf[hermes_read_index++];
-			*pt_buf++ = (s >> 8) & 0xFF;		// Two bytes of Q
-			*pt_buf++ = s & 0xFF;
-			if (hermes_read_index >= HERMES_TX_BUF_SHORTS)
-				hermes_read_index = 0;
-		}
-		sendbuf[520] = 0x7F;
-		sendbuf[521] = 0x7F;
-		sendbuf[522] = 0x7F;
-		offset = C0_index * 4;		// offset into quisk_pc_to_hermes is C0[7:1] * 4
-		sendbuf[523] = C0_index << 1 | key_down;			// C0
+		sendbuf[523] = C0_index << 1 | key_down;		// C0
 		sendbuf[524] = quisk_pc_to_hermes[offset++];		// C1
 		sendbuf[525] = quisk_pc_to_hermes[offset++];		// C2
 		sendbuf[526] = quisk_pc_to_hermes[offset++];		// C3
 		sendbuf[527] = quisk_pc_to_hermes[offset++];		// C4
-		if (++C0_index > 16)
+		if (C0_index == 0)
+			sendbuf[527] = quisk_multirx_count << 3 | 0x04;		// Send the old count, not the changed count
+		if (++C0_index > 11)
 			C0_index = 0;
-		pt_buf = sendbuf + 528;
-		for (i = 0; i < 63; i++) {		// add 63 samples
-			*pt_buf++ = 0x00;			// Left/Right audio sample
-			*pt_buf++ = 0x00;
-			*pt_buf++ = 0x00;
-			*pt_buf++ = 0x00;
-			s = hermes_buf[hermes_read_index++];
-			*pt_buf++ = (s >> 8) & 0xFF;		// Two bytes of I
-			*pt_buf++ = s & 0xFF;
-			s = hermes_buf[hermes_read_index++];
-			*pt_buf++ = (s >> 8) & 0xFF;		// Two bytes of Q
-			*pt_buf++ = s & 0xFF;
-			if (hermes_read_index >= HERMES_TX_BUF_SHORTS)
-				hermes_read_index = 0;
-		}
-		sent = send(mic_socket, (char *)sendbuf, 1032, 0);
-		if (sent != 1032)
-			quisk_udp_mic_error("Tx UDP socket error in Hermes");
+	
+		if (quisk_hermeslite_writepointer > 0) quisk_hermeslite_writeattempts++;
 	}
+
+	// Abort after 53/8 ~= 5 retries
+	if ((quisk_hermeslite_writepointer > 0) && (quisk_hermeslite_writeattempts > 53)) {
+		printf("ERROR: Maximum Hermes-Lite write attempts\n");
+		// Cancel entire write sequence
+		quisk_hermeslite_writepointer = 0;
+		quisk_hermeslite_writeattempts = 0;
+	}
+
+	pt_buf = sendbuf + 528;
+	for (i = 0; i < 63; i++) {		// add 63 samples
+		*pt_buf++ = 0x00;			// Left/Right audio sample
+		*pt_buf++ = 0x00;
+		*pt_buf++ = 0x00;
+		*pt_buf++ = 0x00;
+		s = hermes_buf[hermes_read_index++];
+		*pt_buf++ = (s >> 8) & 0xFF;		// Two bytes of I
+		*pt_buf++ = s & 0xFF;
+		s = hermes_buf[hermes_read_index++];
+		*pt_buf++ = (s >> 8) & 0xFF;		// Two bytes of Q
+		*pt_buf++ = s & 0xFF;
+		if (hermes_read_index >= HERMES_TX_BUF_SHORTS)
+			hermes_read_index = 0;
+	}
+	sent = send(tx_socket, (char *)sendbuf, 1032, 0);
+	if (sent != 1032)
+		quisk_udp_mic_error("Tx UDP socket error in Hermes");
 }
 
 // udp_iq has an initial zero followed by the I/Q samples.
@@ -1064,8 +1088,10 @@ int quisk_process_microphone(int mic_sample_rate, complex double * cSamples, int
 		}
 #endif
 	}
-	if (quisk_use_rx_udp == 10) {	// Send mic samples when key is up or down
-		if (key_down)
+	if (quisk_use_rx_udp == 10) {	// Send Hermes mic samples when key is up or down
+		if ( ! quisk_rx_udp_started)
+			;
+		else if (key_down)
 			quisk_hermes_tx_add(cSamples, count);
 		else
 			quisk_hermes_tx_add(NULL, count);

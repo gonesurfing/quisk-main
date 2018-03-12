@@ -25,10 +25,21 @@ class Hardware(BaseHardware):
 	#		0x02	Enable all other transmit
 	#		0x04	Use the HiQSDR extended IO pins not present in the 2010 QEX ver 1.0
 	#		0x08	The key is down (software key)
+	#		bits 5 and 4: Transmit sample rate
+	#			0b00 48k
+	#			0b01 192k
+	#			0b10 480k
+	#			0b11 8k
 	#		0x40	odyssey: Spot button is in use
 	#		0x80	odyssey: Mic Boost 20dB
 	#	[12]	Rx control bits
+	#		bits 5 through 0
 	#			Second stage decimation less one, 1-39, six bits
+	#		bits 7, 6
+	#		0b00	Prescaler 8, 3-byte samples I and Q; 1440 / 6 = 240 samples per UDP packet
+	#		0b01	Prescaler 2, 2-byte samples
+	#		0b10	Prescaler 40, 3-byte samples
+	#		0b11	Prescaler 2, 1-byte samples
 	#	[13]	zero or firmware version number
 	# The above is used for firmware  version 1.0.
 	# Version 1.1 adds eight more bytes for the HiQSDR conntrol ports:
@@ -58,6 +69,7 @@ class Hardware(BaseHardware):
     self.tx_level = 0
     self.tx_control = 0
     self.rx_control = 0
+    QS.set_sample_bytes(3)
     self.vna_count = 0	# VNA scan count; MUST be zero for non-VNA operation
     self.cw_delay = conf.cw_delay
     self.index = 0
@@ -85,6 +97,8 @@ class Hardware(BaseHardware):
     self.decimations = []		# supported decimation rates
     for dec in (40, 20, 10, 8, 5, 4, 2):
       self.decimations.append(dec * 64)
+    self.decimations.append(80)
+    self.decimations.append(64)
     if self.conf.fft_size_multiplier == 0:
       self.conf.fft_size_multiplier = 6		# Set size needed by VarDecim
   def open(self):
@@ -116,8 +130,12 @@ class Hardware(BaseHardware):
       self.rx_udp_socket = None
   def ReturnFrequency(self):	# Return the current tuning and VFO frequency
     return None, None		# frequencies have not changed
-  def ReturnVfoFloat(self):	# Return the accurate VFO as a float
-    return float(self.rx_phase) * self.conf.rx_udp_clock / 2.0**32
+  def ReturnVfoFloat(self, freq=None):	# Return the accurate VFO as a float
+    if freq is None:
+      rx_phase = self.rx_phase
+    else:
+      rx_phase = int(float(freq) / self.conf.rx_udp_clock * 2.0**32 + 0.5) & 0xFFFFFFFF
+    return float(rx_phase) * self.conf.rx_udp_clock / 2.0**32
   def ChangeFrequency(self, tx_freq, vfo_freq, source='', band='', event=None):
     if vfo_freq != self.vfo_frequency:
       self.vfo_frequency = vfo_freq
@@ -232,9 +250,10 @@ class Hardware(BaseHardware):
   def HeartBeat(self):
     if self.sndp_active:	# AE4JY Simple Network Discovery Protocol - attempt to set the FPGA IP address
       try:
+        if DEBUG: print("Sndp send")
         self.socket_sndp.sendto(self.sndp_request, (self.broadcast_addr, 48321))
-        data = self.socket_sndp.recv(1024)
-        # print(repr(data))
+        data, ffrom = self.socket_sndp.recvfrom(1024)
+        if DEBUG: print("Sndp From", ffrom, "Data", repr(data))
       except:
         # traceback.print_exc()
         pass
@@ -243,7 +262,7 @@ class Hardware(BaseHardware):
           ip = self.conf.rx_udp_ip.split('.')
           t = (data[0:4] + chr(2) + data[5:37] + chr(int(ip[3])) + chr(int(ip[2])) + chr(int(ip[1])) + chr(int(ip[0]))
                + chr(0) * 12 + chr(self.conf.rx_udp_port & 0xFF) + chr(self.conf.rx_udp_port >> 8) + chr(0))
-          # print(repr(t))
+          if DEBUG: print("Sndp reply", repr(t))
           self.socket_sndp.sendto(t, (self.broadcast_addr, 48321))
     try:	# receive the old status if any
       data = self.rx_udp_socket.recv(1024)
@@ -330,7 +349,13 @@ class Hardware(BaseHardware):
     else:
       self.index = index
     dec = self.decimations[self.index]
-    self.rx_control = dec // 64 - 1		# Second stage decimation less one
+    if dec >= 128: 
+      self.rx_control = dec // 64 - 1		# Second stage decimation less one
+      QS.set_sample_bytes(3)
+    else:
+      self.rx_control = dec // 16 - 1		# Second stage decimation less one
+      self.rx_control |= 0b01000000			# Change prescaler to 2 (instead of 8)
+      QS.set_sample_bytes(2)
     self.NewUdpStatus()
     return int(float(self.conf.rx_udp_clock) / dec + 0.5)
   def VarDecimRange(self):
@@ -372,11 +397,12 @@ class Hardware(BaseHardware):
       self.vna_count = vna_count	# Number of scan points
     if vna_start is not None:	# Set the start and stop frequencies.  The tx_phase is the frequency delta.
       self.rx_phase = int(float(vna_start) / self.conf.rx_udp_clock * 2.0**32 + 0.5) & 0xFFFFFFFF
-      self.tx_phase = int(float(vna_stop - vna_start) / self.vna_count / self.conf.rx_udp_clock * 2.0**32 + 0.5) & 0xFFFFFFFF
+      self.tx_phase = int(float(vna_stop - vna_start) / (self.vna_count - 1) / self.conf.rx_udp_clock * 2.0**32 + 0.5) & 0xFFFFFFFF
     self.tx_control &= ~0x03	# Erase last two bits
     self.rx_control = 40 - 1
     self.tx_level = 255
     self.NewUdpStatus(do_tx)
     start = int(float(self.rx_phase) * self.conf.rx_udp_clock / 2.0**32 + 0.5)
-    stop = int(start + float(self.tx_phase) * self.vna_count * self.conf.rx_udp_clock / 2.0**32 + 0.5)
+    phase = self.rx_phase + self.tx_phase * (self.vna_count - 1)
+    stop = int(float(phase) * self.conf.rx_udp_clock / 2.0**32 + 0.5)
     return start, stop		# return the start and stop frequencies after integer rounding

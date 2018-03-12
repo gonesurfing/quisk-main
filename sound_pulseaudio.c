@@ -28,6 +28,10 @@
  * asynchronous API and threaded mainloop.
  * Eric Thornton, KM4DSJ 2015
 */
+/*
+ * 2017 Nov by N2ADR Remove most exit(1) statements.
+ * 2017 Nov by N2ADR Add code to enable PulseAudio to continue with mis-spelled device names.
+*/
 
 #include <Python.h>
 #include <stdio.h>
@@ -52,10 +56,13 @@ static pa_mainloop_api *pa_mlapi;
 static pa_context *pa_ctx; 		//local context
 static pa_context *pa_IQ_ctx; 		//remote context for IQ audio
 volatile int streams_ready = 0;		//This is ++/-- by the mainloop thread
+volatile int streams_to_start;
 
 // remember all open devices for easy cleanup on exit
 static pa_stream *OpenPulseDevices[PA_LIST_SIZE * 2] = {NULL};
 
+static int have_QuiskDigitalInput;	// Do we need to create this null sink?
+static int have_QuiskDigitalOutput;	// Do we need to create this null sink?
 
 /* This callback happens any time a stream changes state. Here, it's primary used to 
  * tell the quisk thread when streams are ready. 
@@ -66,18 +73,24 @@ void stream_state_callback(pa_stream *s, void *userdata) {
     assert(s);
     assert(dev);
     
-    switch (pa_stream_get_state(s)) {
+    dev->pulse_stream_state = pa_stream_get_state(s);
+    switch (dev->pulse_stream_state) {
         case PA_STREAM_CREATING:
+	    if (quisk_sound_state.verbose_pulse)
+		printf("\n**Stream %s state Creating\n", dev->name);
             break;
             
         case PA_STREAM_TERMINATED:
-            if (quisk_sound_state.verbose_pulse)
-                printf("stream %s terminated\n", dev->name);
+	    if (quisk_sound_state.verbose_pulse)
+		printf("\n**Stream %s state Terminated\n", dev->name);
             streams_ready--;
             break;
             
         case PA_STREAM_READY:
+	    if (quisk_sound_state.verbose_pulse)
+		printf("\n**Stream %s state Ready\n", dev->name);
             streams_ready++; //increment counter to tell other thread that this stream is ready
+	    streams_to_start++;
             if (quisk_sound_state.verbose_pulse) {
                 const pa_buffer_attr *a;
                 printf("Connected to device %s (%u, %ssuspended). ",
@@ -98,8 +111,13 @@ void stream_state_callback(pa_stream *s, void *userdata) {
         
         case PA_STREAM_FAILED:
         default:
-            printf("Stream error: %s - %s\n", dev->name, pa_strerror(pa_context_errno(pa_stream_get_context(s))));
-            exit(1);
+	    snprintf(quisk_sound_state.err_msg, QUISK_SC_SIZE,
+		"Stream error: %s - %s", dev->name, pa_strerror(pa_context_errno(pa_stream_get_context(s))));
+	    if (quisk_sound_state.verbose_pulse)
+		printf("\n**Stream %s state Failed\n", dev->name);
+            printf("%s\n", quisk_sound_state.err_msg);
+	    streams_to_start++;
+            break;
     }
 }
 
@@ -148,7 +166,7 @@ static void stream_corked_callback(pa_stream *s, int success, void *userdata) {
     else {
         if (quisk_sound_state.verbose_pulse)
             printf("Stream cork/uncork %s Failure!\n", dev->name);
-        exit(1);
+        exit(11);
     }
 }
 
@@ -163,7 +181,7 @@ static void stream_flushed_callback(pa_stream *s, int success, void *userdata) {
     }
     else {
         printf("Stream flush %s Failure!\n", dev->name);
-        exit(1);
+        exit(12);
     }
 }
 
@@ -216,7 +234,7 @@ static void server_info_cb(pa_context *c, const pa_server_info *info, void *user
             dev_name = NULL;			// the device name is "pulse" for the default device
 
         if (quisk_sound_state.verbose_pulse)
-            printf("Opening Device %s ", dev_name);
+            printf("Opening Device %s\n", dev_name);
 
         //Construct sample specification. Use S16LE if availiable. Default to Float32 for others.
         //If the source/sink is not Float32, Pulseaudio will convert it (uses CPU)
@@ -250,11 +268,11 @@ static void server_info_cb(pa_context *c, const pa_server_info *info, void *user
 
             if (!(s = pa_stream_new(c, dev->stream_description, &ss, NULL))) {
                 printf("pa_stream_new() failed: %s", pa_strerror(pa_context_errno(c)));
-                exit(1);
+                continue;
             }
             if (pa_stream_connect_record(s, dev_name, &rec_ba, rec_flags) < 0) {
                 printf("pa_stream_connect_record() failed: %s", pa_strerror(pa_context_errno(c)));
-                exit(1);
+                continue;
             }
             pa_stream_set_overflow_callback(s, stream_overflow_callback, dev);
         }
@@ -265,11 +283,11 @@ static void server_info_cb(pa_context *c, const pa_server_info *info, void *user
 
             if (!(s = pa_stream_new(c, dev->stream_description, &ss, NULL))) {
                 printf("pa_stream_new() failed: %s", pa_strerror(pa_context_errno(c)));
-                exit(1);
+                continue;
             }
             if (pa_stream_connect_playback(s, dev_name, &play_ba, pb_flags, pa_cvolume_set(&cv, ss.channels, volume), NULL) < 0) {
                 printf("pa_stream_connect_playback() failed: %s", pa_strerror(pa_context_errno(c)));
-                exit(1);
+                continue;
             }
             pa_stream_set_underflow_callback(s, stream_underflow_callback, dev);
         }
@@ -357,7 +375,7 @@ void quisk_cork_pulseaudio(struct sound_dev *dev, int b) {
     
     if (!(o = pa_stream_cork(s, b, stream_corked_callback, dev))) {
         printf("pa_stream_cork(): %s\n", pa_strerror(pa_context_errno(pa_stream_get_context(s))));
-        exit(1);
+        exit(13);
     }
     else {
         while(pa_operation_get_state(o) == PA_OPERATION_RUNNING)
@@ -382,7 +400,7 @@ void quisk_flush_pulseaudio(struct sound_dev *dev) {
     
     if (!(o = pa_stream_flush(s, stream_flushed_callback, dev))) {
         printf("pa_stream_flush(): %s\n", pa_strerror(pa_context_errno(pa_stream_get_context(s))));
-        exit(1);
+        exit(14);
     }
     else {
         while(pa_operation_get_state(o) == PA_OPERATION_RUNNING)
@@ -418,7 +436,7 @@ int quisk_read_pulseaudio(struct sound_dev *dev, complex double *cSamples) {
     pa_stream *s = dev->handle;
     size_t read_bytes;
     
-    if (!dev)
+    if (!dev || dev->pulse_stream_state != PA_STREAM_READY)
         return 0;
 
     if (dev->cork_status) {
@@ -541,7 +559,7 @@ void quisk_play_pulseaudio(struct sound_dev *dev, int nSamples, complex double *
     void *fbuffer;
     int fbuffer_bytes = 0;
     
-    if( !dev || nSamples <= 0)
+    if( !dev || nSamples <= 0 || dev->pulse_stream_state != PA_STREAM_READY)
         return;
     
     if (dev->cork_status)
@@ -592,7 +610,7 @@ void quisk_play_pulseaudio(struct sound_dev *dev, int nSamples, complex double *
 
     else {
        printf("Unknown sample size for %s", dev->name);
-       exit(1);
+       exit(15);
     }
 
 
@@ -630,6 +648,7 @@ void sort_devices(struct sound_dev **plist, struct sound_dev **pLocal, struct so
     while(*plist) {
         struct sound_dev *dev = *plist++;
 
+	dev->pulse_stream_state = PA_STREAM_UNCONNECTED;
         // Not a PulseAudio device
         if( dev->driver != DEV_DRIVER_PULSEAUDIO )
             continue;
@@ -686,6 +705,12 @@ void quisk_start_sound_pulseaudio(struct sound_dev **pCapture, struct sound_dev 
 
     sort_devices(pCapture, LocalPulseDevices, RemotePulseDevices);
     sort_devices(pPlayback, LocalPulseDevices, RemotePulseDevices);
+    pa_IQ_ctx = NULL;
+    pa_ctx = NULL;
+    pa_ml = NULL;
+    pa_mlapi = NULL;
+    streams_to_start = 0;
+    //quisk_sound_state.verbose_pulse = 1;
     
     if (!RemotePulseDevices[0] && !LocalPulseDevices[0]) {
         if (quisk_sound_state.verbose_pulse)
@@ -701,7 +726,7 @@ void quisk_start_sound_pulseaudio(struct sound_dev **pCapture, struct sound_dev 
   
     if (pa_threaded_mainloop_start(pa_ml) < 0) {
         printf("pa_mainloop_run() failed.");
-        exit(1);
+	return;
     }
     else
         printf("Pulseaudio threaded mainloop started\n");
@@ -736,7 +761,7 @@ void quisk_start_sound_pulseaudio(struct sound_dev **pCapture, struct sound_dev 
     if (quisk_sound_state.verbose_pulse)
         printf("Waiting for %d streams to start\n", num_pa_devices);
     
-    while (streams_ready < num_pa_devices); // wait for all the devices to open
+    while (streams_to_start < num_pa_devices); // wait for all the devices to open
 
     if (quisk_sound_state.verbose_pulse)
         printf("All streams started\n");
@@ -768,16 +793,19 @@ void quisk_close_sound_pulseaudio() {
     if (pa_IQ_ctx) {
         pa_context_disconnect(pa_IQ_ctx);
         pa_context_unref(pa_IQ_ctx);
+	pa_IQ_ctx = NULL;
     }
 
     if (pa_ctx) {
         pa_context_disconnect(pa_ctx);
         pa_context_unref(pa_ctx);
+	pa_ctx = NULL;
     }
 
     if (pa_ml) {
         pa_threaded_mainloop_stop(pa_ml);
         pa_threaded_mainloop_free(pa_ml);
+	pa_ml = NULL;
     }
 }
 
@@ -842,12 +870,20 @@ static void pa_sinklist_cb(pa_context *c, const pa_sink_info *l, int eol, void *
     if (eol > 0)	// If eol is set to a positive number, you're at the end of the list
 		return;
     source_sink(l->name, l->description, l->proplist, (PyObject *)userdata);
+    if ( ! strcmp(l->name, "QuiskDigitalInput"))
+        have_QuiskDigitalInput = 1;
+    if ( ! strcmp(l->name, "QuiskDigitalOutput"))
+        have_QuiskDigitalOutput = 1;
 }
 
 static void pa_sourcelist_cb(pa_context *c, const pa_source_info *l, int eol, void *userdata) {
     if (eol > 0)
 		return;
     source_sink(l->name, l->description, l->proplist, (PyObject *)userdata);
+}
+
+static void index_callback(pa_context *c, uint32_t idx, void *userdata) {
+    //printf("%u\n", idx);
 }
 
 PyObject * quisk_pa_sound_devices(PyObject * self, PyObject * args)
@@ -915,6 +951,45 @@ PyObject * quisk_pa_sound_devices(PyObject * self, PyObject * args)
 			pa_mainloop_iterate(pa_names_ml, 1, NULL);
 			break;
 		case 3:
+			if (pa_operation_get_state(pa_op) == PA_OPERATION_DONE) {
+				pa_operation_unref(pa_op);
+				state = 4;
+			}
+			else
+				pa_mainloop_iterate(pa_names_ml, 1, NULL);
+			break;
+		// The following loads modules for digital input and output if they are not present.
+		case 4:
+			if ( ! have_QuiskDigitalInput) {
+				pa_op = pa_context_load_module(pa_names_ctx, "module-null-sink",
+					"sink_name=QuiskDigitalInput sink_properties=device.description=QuiskDigitalInput",
+					index_callback, NULL);
+				state = 5;
+				pa_mainloop_iterate(pa_names_ml, 1, NULL);
+			}
+			else
+				state = 6;
+			break;
+		case 5:
+			if (pa_operation_get_state(pa_op) == PA_OPERATION_DONE) {
+				pa_operation_unref(pa_op);
+				state = 6;
+			}
+			else
+				pa_mainloop_iterate(pa_names_ml, 1, NULL);
+			break;
+		case 6:
+			if ( ! have_QuiskDigitalOutput) {
+				pa_op = pa_context_load_module(pa_names_ctx, "module-null-sink",
+					"sink_name=QuiskDigitalOutput sink_properties=device.description=QuiskDigitalOutput",
+					index_callback, NULL);
+				state = 7;
+				pa_mainloop_iterate(pa_names_ml, 1, NULL);
+			}
+			else
+				state = 9;
+			break;
+		case 7:
 			if (pa_operation_get_state(pa_op) == PA_OPERATION_DONE) {
 				pa_operation_unref(pa_op);
 				state = 9;

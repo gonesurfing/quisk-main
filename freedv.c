@@ -199,7 +199,7 @@ static int quisk_freedv_rx(complex double * cSamples, double * dsamples, int cou
 	nout = 0;
 	need = freedv_nin(hF);
 	for (i = 0; i < count; i++) {
-		cx = cRxFilterOut(cSamples[i], bank);
+		cx = cRxFilterOut(cSamples[i], bank, 0);
 		if (rxMode == 12)		// lower sideband
 			cx = conj(cx);
 #if 0

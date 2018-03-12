@@ -878,6 +878,7 @@ def get_backend(find_library=None):
         if _lib is None:
             _lib = _load_library(find_library=find_library)
             _setup_prototypes(_lib)
+            _lib.usb_init()	# Thanks to Stew, N8VET and Tony, VK4KRC
         return _LibUSB(_lib)
     except usb.libloader.LibaryException:
         # exception already logged (if any)

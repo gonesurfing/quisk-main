@@ -284,7 +284,7 @@ int  quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
 	int   li, lq, * ptl;	// int must be 32 bits
 	complex double c;
 	int ii, qq, nSamples;
-	int bytes, frames, poll_size, millisecs, bytes_per_frame, pass;
+	int bytes, frames, poll_size, millisecs, bytes_per_frame;
 	
 	if ( ! dev->handle || ! dev->buffer)
 		return 0;
@@ -358,7 +358,6 @@ int  quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
 	dev->dataPos += bytes;
 	dev->dataPos = dev->dataPos % dev->play_buf_size;
 	nSamples = 0;
-	pass = 0;
 	switch (dev->sample_bytes + dev->use_float) {
 	case 2:
 		pts = (short *)pt1;

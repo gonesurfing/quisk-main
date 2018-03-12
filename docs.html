@@ -1,7 +1,6 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-<meta http-equiv="content-type" content="text/html; charset=utf-8">
+<html lang="en"><head>
+<meta http-equiv="content-type" content="text/html; charset=UTF-8">
 <meta name="description" content="Documentation for Quisk">
 <meta name="author" content="James C. Ahlstrom">
 <meta name="keywords" content="quisk, sdr, software defined radio, ham radio">
@@ -63,7 +62,7 @@ div.contents {
 <div class="contents">
 <h1>
 <a id="Welcome"></a>
-Welcome to QUISK (February 2014)
+Welcome to QUISK (November 2017)
 </h1>
 
 <p>
@@ -83,6 +82,7 @@ complete transceiver. Quisk works with this hardware:
 <li>SDR-IQ connected by USB</li>
 <li>N2ADR hardware connected by Ethernet and IP</li>
 <li>HiQSDR hardware connected by Ethernet and IP</li>
+<li>The Hermes-Lite project at <a href="http://hermeslite.com">hermeslite.com</a></li>
 <li>Quisk can be used as a pan adapter, and can control some radios</li>
 </ul>
 
@@ -96,7 +96,7 @@ keying signal that can mute the audio and substitute a sidetone.
 <br>
 
 <br>
-Please read the file <a href="CHANGELOG.txt">CHANGELOG.txt</a>
+Please read the file <a href="http://james.ahlstrom.name/quisk/CHANGELOG.txt">CHANGELOG.txt</a>
 for changes.
 <br>
 
@@ -150,25 +150,21 @@ Many others contributed to Quisk, and are mentioned in comments in the source co
 
 <h2 id="Installation">Installation</h2>
 <br>
-Quisk is registered on <a href="http://pypi.python.org">http://pypi.python.org</a>;
-just search for "quisk" to see the latest version and the download URL. The download page is <a href="http://james.ahlstrom.name/quisk/index.html">http://james.ahlstrom.name/quisk/index.html</a>.
-There will be a
-source
+The download page is <a href="http://james.ahlstrom.name/quisk/index.html">http://james.ahlstrom.name/quisk/index.html</a>.
+There will be a source
 distribution (a tar.gz file) and a binary Windows version (msi
-installer). The Linux version is for 32-bit Linux. If you
-get the message "wrong ELF class", you have 64-bit Linux, and you must
-recompile (use "make"). You
-do not need to compile the Windows binary, but you need Python to
-run it.
+installer). The Linux version is for 64-bit Linux. If you
+get the message "wrong ELF class", you have 32-bit Linux, and you must
+recompile (use "make"). You do not need to compile the Windows binary.
 <br>
 
 <br>
-You must have Python installed on your computer, preferably version
-2.7. Linux almost certainly has Python installed. For
-Windows, visit <a href="http://www.python.org">http://www.python.org</a>
+You must have Python 2.7 and wxPython installed on your computer.
+Linux almost certainly has Python installed. For
+Windows, visit <a href="http://www.python.org/">http://www.python.org</a>
 and download the Windows installer for Python 2.7 to install it.
 You must also install the latest wxPython package for your version of
-Python from <a href="http://www.wxpython.org">http://www.wxpython.org.</a>
+Python from <a href="http://www.wxpython.org/">http://www.wxpython.org.</a>
 <h3 id="g0.2.1">Linux </h3>
 I recommend that you just uncompress and un-tar the tar.gz file
 somewhere
@@ -176,17 +172,13 @@ under your home directory:
 <br>
 
 <br>
-gunzip quisk-3.4.4.tar.gz
+tar zxvf quisk-4.1.11.tar.gz
 <br>
-tar xf quisk-3.4.4.tar
-<br>
-# Check directory quisk-3.4.4 before removing the tar file
-<br>
-rm quisk-3.4.4.tar
+# Check directory quisk-4.1.11 before removing the tar file
 <br>
 # Perhaps change to a shorter name unless you want multiple versions
 <br>
-mv quisk-3.4.4 quisk
+mv quisk-4.1.11 quisk
 <br>
 
 <br>
@@ -206,7 +198,7 @@ any error output, it will appear on the terminal. After testing, you
 can
 create a panel launcher with the same command but a full path, for
 example
-"python /home/jim/quisk-3.4.4/quisk.py" or "python
+"python /home/jim/quisk-4.1.11/quisk.py" or "python
 /home/jim/quisk/quisk.py"
 if you used the shorter name . Then just click the button to run Quisk.
 <br>
@@ -232,10 +224,9 @@ below. Needed packages are:
 <br>
 <ul>
 
-<li>python2.7, the Python programming language. See <a href="http://www.python.org">http://www.python.org</a>.
+<li>python2.7, the Python programming language. See <a href="http://www.python.org/">http://www.python.org</a>.
 This
-almost certainly is already installed on your Linux. Use the version
-you have, or get the most recent version. </li>
+almost certainly is already installed on your Linux.</li>
 </ul>
 <ul>
 
@@ -443,8 +434,15 @@ using Ethernet. Change it for other sound access.</li>
 devices. It is not used by the Quisk program. </li>
 </ul>
 <h2 id="Configuration">Configuration</h2>
-Quisk does not have a menu to control its operating parameters.
-Instead, you must create and edit your own configuration file.
+The Quisk "Config" button brings up a number of status and configuration screens. When starting with Quisk, you need to create a named "radio"
+and then set the configuration for that radio. You can have multiple radios to support several hardwares, or different settings
+for the same hardware. Use the "Help with Radios" button for documentation. A special radio named "ConfigFileRadio" is always available.
+It doesn't use the settings screens and takes all its settings from the configuration file. 
+
+When Quisk starts, it reads an initial configuration from the Quisk file quisk_conf_defaults.py.
+Then it reads your configuration file if you have one. Then it reads settings from the configuration screens,
+which are stored in the file quisk_settings.json.
+You can set almost everything with the screens, but you can have a configuration file if you want.
 For Linux, the default configuration file name is ".quisk_conf.py" in
 your home
 directory; that is, "~/.quisk_conf.py". For Windows, the default
@@ -475,15 +473,7 @@ Newer versions of Quisk will not overwrite your personal config file.
 <br>
 
 <br>
-The file quisk_conf_defaults.py contains all Quisk's parameters.
-It is read in first; then your config file is read in and overwrites
-some parameters. Do not copy quisk_conf_defaults.py to your
-config file. It is too long and is subject
-to change with each new version. Instead,
-read it
-to see what you can change, and then just put the lines that need
-changing into
-your config file.
+The file quisk_conf_defaults.py contains all Quisk's parameters, and you can read it to see what can be changed.
 <br>
 
 <br>
@@ -529,8 +519,7 @@ only for simple hardware needs. The class should start like this:
 <br>
 <br>
 
-<pre>
-from quisk_hardware_model import Hardware as BaseHardware
+<pre>from quisk_hardware_model import Hardware as BaseHardware
 class Hardware(BaseHardware):
     def __init__(self, app, conf):
         BaseHardware.__init__(self, app, conf)
@@ -668,9 +657,9 @@ pavucontrol package first.
 <br>
 
 <br>
-Thanks to Philip G. Lee, Quisk now has native support for PulseAudio. 
+Thanks to Philip G. Lee and Eric Thornton, KM4DSJ, Quisk now has native support for PulseAudio. 
 For PulseAudio devices, use the name "pulse:name" and connect the streams
-to your hardware devices using a PulseAudio control program.  The name "pulse"
+to your hardware devices using a PulseAudio control program like pavucontrol.  The name "pulse"
 alone refers to the "default" device.  The PulseAudio names are quite long;
 for example "alsa_output.pci-0000_00_1b.0.analog-stereo".  Look on the screen
 Config/Sound to see the device names.  There is a description, a PulseAudio name,
@@ -680,26 +669,24 @@ An example is:
 
 <pre>
 # As seen on the Config/Sound screen:
-  CM106 Like Sound Device Analog Stereo
+     CM106 Like Sound Device Analog Stereo
      alsa_output.usb-0d8c_USB_Sound_Device-00-Device.analog-stereo
      USB Sound Device USB Audio (hw:1,0)
 
-# In your config file:
 # Use the default pulse device for radio sound:
-name_of_sound_play = "pulse"
+   "pulse"
 # Use a PulseAudio name for radio sound:
-name_of_sound_play = "pulse:alsa_output.usb-0d8c_USB_Sound_Device-00-Device.analog-stereo"
+   "pulse:alsa_output.usb-0d8c_USB_Sound_Device-00-Device.analog-stereo"
 # Abbreviate the PulseAudio name:
-name_of_sound_play = "pulse:alsa_output.usb"
+   "pulse:alsa_output.usb"
 # Another abbreviation:
-name_of_sound_play = "pulse:CM106"
+   "pulse:CM106"
 </pre>
 
 The PulseAudio code should not cause problems, but I am not sure what happens if PulseAudio is not
 installed, or if you replace it with JACK.  This config file option will turn off all but directly
 entered "pulse:" names:
-<pre>
-show_pulse_audio_devices = False
+<pre>show_pulse_audio_devices = False
 </pre>
 
 
@@ -952,7 +939,7 @@ giving the reason for the change:
 <br>
 
 <br>
-<table style="text-align: left; width: 896px; height: 190px;" border="1" cellpadding="2" cellspacing="2">
+<table style="text-align: left; width: 896px; height: 190px;" cellspacing="2" cellpadding="2" border="1">
 
 <tbody>
 
@@ -1096,26 +1083,6 @@ the Python CObject or Capsule interface. That simplifies linkage
 and eliminates problems with module search paths. See the
 documentation in import_quisk_api.c. This change was suggested by
 Maitland Bottoms, AA4HS, and he also provided patches.
-<br>
-
-<br>
-Most Quisk users will not need to write packages to support their
-hardware. They will need a config file in
-their home directory (or other name with the "-c" or "--config" command
-line option). And they may need a custom hardware file that can
-be written directly in the config file (for simple cases) or imported
-from the file quisk_hardware.py. If you need to import Python
-files, they must be on your PYTHONPATH. You could just put them
-in the Quisk root (not really recommended). Or you could put them
-in a directory somewhere on PYTHONPATH (import sys; print
-sys.path). Or you could put them in a directory somewhere and add
-that directory to PYTHONPATH in your config file:
-<br>
-
-<br>
- import sys
-<br>
- sys.path.append('/home/jim/my_python_stuff')
 <br>
 
 <br>
@@ -1292,7 +1259,7 @@ usual, and the maximum bandwidth is 20 kilohertz.
 <br>
 
 <br>
-Digital modes require an external program such as Fldigi to decode the
+Digital modes require an external program such as Fldigi or wsjtx to decode the
 received
 audio and to generate transmit audio. There are two aspects, rig
 control and audio transfer. Rig control is needed to synchronize
@@ -1300,7 +1267,7 @@ the transmit frequency between Quisk and Fldigi (or other program) and
 to operate the PTT (push to talk). You can control Quisk using
 either XML-RPC or Hamlib. For Fldigi, start Quisk and select a
 digital mode.
-Then start Fldigi and set Fldigi rig control to "Use XMML-RPC".
+Then start Fldigi and set Fldigi rig control to "Use XML-RPC".
 Now changing the frequency on one program will change the other.
 Keying Quisk to key down (however you do that with your hardware) will
 set Fldigi to Transmit. Pressing the PTT control in Fldigi will
@@ -1308,25 +1275,21 @@ also press the PTT button in Quisk.
 <br>
 
 <br>
-Using Hamlib is similar. Set your digital program to Hamlib
-control, rig 2, device localhost:4575. This establishes a TCP
-connection to Quisk. If
-your program does not offer rig 2, please update your Hamlib files for
-that program. If your program can not set the TCP port to
-localhost:4575, then change the port Quisk uses by adding "hamlib_port
-= 4532" to your config file. This is the default port for rig 2.
-Hamlib control can be used by
-other programs such as logging programs. See <a href="http://james.ahlstrom.name/hamlib.html">http://james.ahlstrom.name/hamlib.html</a> for more information.
-<br>
-
-<br>
-Please read the file quisk_conf_defaults.py (as usual) to discover the various settings available for digital modes.
+For wsjtx, XML-RPC is not available, so you must use Hamlib.
+To connect an external program to Quisk using Hamlib, configure your program to use "Hamlib NET rigctl" (rig 2).
+Then go to the Quisk "Remote" config screen for your radio and set
+"IP port for Hamlib" to 4532 and the IP address to localhost. This assumes you are not using the rigctld daemon program.  If you are,
+set the Quisk port to 4575 and tell rigctld to control quisk on port 4575.
+Hamlib control can be used by other programs such as logging programs.
+See <a href="http://james.ahlstrom.name/hamlib.html">http://james.ahlstrom.name/hamlib.html</a> for more information.
 <br>
 
 <br>
 Quisk has an additional audio input and output for digital
 programs. They are named digital_input_name and
-digital_output_name. You need to set these names to a sound
+digital_output_name in the config file.
+They are Digital Input and Digital Output on your radio's Sound configuration screen.
+You need to set these names to a sound
 device, and then set the Fldigi (or other program) sound card to the
 same device. The sound device is not a real sound card; it is
 some sort of loopback device, and is only needed because there is no
@@ -1336,48 +1299,61 @@ on the web. It works for any digital program, not just Fldigi.
 <br>
 
 <br>
-If you use Windows, you need to purchase Virtual Audio Cable
+If you use Windows, you need to purchase a Virtual Audio Cable
 (VAC). Connect Quisk to one side, and your digital program to the
 other. I haven't tried this, so I don't know the device names to
-use.
+use, but it is straight forward.
 <br>
 
 <br>
 If you use Linux, you can use the ALSA loopback device, or use
-PortAudio, PulseAudio or Jack to route your audio. The ALSA loopback
-device is simple, and works the same as the Windows VAC. First
+PortAudio, PulseAudio or Jack to route your audio.  Using PulseAudio is the
+easiest method because Quisk can set up the loopback devices when it starts.
+Set Digital Input to
+pulse:QuiskDigitalInput.monitor, and set Digital Output to pulse:QuiskDigitalOutput.
+These names should be on the drop down list. If they are missing, make sure that
+you didn't set "show_pulse_audio_devices" to False in your config file.  Then restart Quisk.
+In your digital program, connect the digital
+input to QuiskDigitalOutput.monitor and the digital output to QuiskDigitalInput.
+These names will be on the sound menu in wsjtx, and you should be receiving and transmitting digital data.
+<br>
+
+<br>
+Fldigi only has a PulseAudio check box, and there is no way to set the proper device.
+In this case, first install the program pavucontrol to control PulseAudio.  This is a useful program to
+control and understand PulseAudio even if you are not using digital.  Set the Quisk devices as above.
+Now start both Quisk and Fldigi, and then pavucontrol.  The Playback and Recording screens in pavucontrol will
+show the devices being used. Change the Fldigi playback to QuiskDigitalInput, and the Fldigi recording to
+Monitor of QuiskDigitalOutput.  Then everything should work.  You do not need to use pavucontrol again because PulseAudio will
+remember the settings.
+<br>
+
+<br>
+If you don't have PulseAudio or don't want to use it, you can use the ALSA loopback device.
+The ALSA loopback device works the same way as the Windows VAC. First
 create the loopback device with the command "modprobe snd-aloop" (you
 will need to be root). You can create the loopback device
-automatically, but the way to do that depends on your version of
-Linux. I just put the modprobe command in /etc/rc.local for my
-Ubuntu system. Now you can enter "cat /proc/asound/cards" to
+when the system starts, but the way to do that depends on your version of
+Linux. I added snd-aloop to /etc/modules.  You could put the modprobe command in /etc/rc.local instead.
+Restart Linux. Now you can enter "cat /proc/asound/cards" to
 print out your sound cards, and you should see a "Loopback" card
 listed. The cards are also shown on the Quisk config
 screen. The Loopback card has one side that connects to Quisk and
 another side that connects to your digital program. For the Quisk
-side use:
-<br>
-
-<br>
-digital_input_name = "hw:Loopback,0"
-<br>
-digital_output_name = digital_input_name
-<br>
-<code>
-<br>
-</code>Note that the Loopback card is full duplex, and handles both
-input and output. For the digital program side, set the input and
+side connect both Digital Input and Digital Output to Loopback,0.
+Note that the Loopback card is full duplex, and handles both
+input and output. There are actually eight loopbacks created at once,
+but we are only using subdevice 0. For the digital program side, set the input and
 output to "Loopback,1". For Fldigi this is in the Audio / Devices
 / PortAudio menu. Your audio is now connected and you
 should be able to receive digital signals. Be sure to test your
 transmit signal off the air. You may need to reduce power to
-improve linearity. I am open to adding support for other digital
-programs, especially if you provide information on how to do it.
+improve linearity.
 <br>
 
 <br>
-The sample rate for digital_input_name (transmit audio) is fixed at
-48000 sps. The sample rate for digital_output_name (received
+The sample rate for Quisk Digital Input (transmit audio) is fixed at
+48000 sps. The sample rate for Quisk Digital Output (received
 audio) is the same as the rate sent to your speakers. The
 Loopback device adopts the rate of the first program to use it.
 So starting Quisk first and your digital program next should
@@ -1385,10 +1361,9 @@ work. Or you may need to set the appropriate rates. It is
 probably best to set all sample rates to 48000 sps because the digital
 signals are so narrow, and this make them easier to see.
 <br>
-<code></code>
 <h2 id="VNA">Vector Network Analyzer</h2>
 If you have my transceiver hardware from 2010 QEX, or the newer HiQSDR
-hardware, you can use it as a vector network analyzer by using a
+hardware, or the Hermes-Lite you can use it as a vector network analyzer by using a
 special program. You must be using FPGA firmware version 1.3 or
 newer. Run the VNA program with "python quisk_vna.py" or use a
 shortcut. The VNA program will not work with SoftRock or other
@@ -1398,6 +1373,16 @@ antennas without additional expense.
 <br>
 
 <br>
+A calibration run must be taken before any data can be obtained.
+The calibrations request a scan of data points every 15 killohertz from
+zero to 60 megahertz, or a little over 4000 points. These data
+are saved so that the scan frequencies can be changed without a new
+calibration. For any start and end scan frequency the user
+chooses, these saved calibrations are used with linear interpolation.
+<br>
+
+<br>
+<h3>HiQSDR Internals</h3>
 When running in VNA mode the two control bytes [18:20] are the 16-bit
 non-zero VNA count "vna_count", the number of data points to
 send. This locks the transmit and receive frequency to the
@@ -1415,25 +1400,12 @@ last data point, and the process repeats. The receiving software
 must look for the zero sample that marks the start of a new scan.
 The total number of points in the scan is vna_count, and blocks
 received with a different length should be rejected.
-<br>
-
-<br>
-Since the transmit and receive frequency is the same, the data points
+Since the transmit and receive frequency are the same, the data points
 are I/Q values at DC; that is, a complex number representing a voltage
 and phase.
-<br>
-
-<br>
-A calibration run must be taken before any data can be obtained.
-The calibrations request a scan of data points every 15 killohertz from
-zero to 60 megahertz, or a little over 4000 points. These data
-are saved so that the scan frequencies can be changed without a new
-calibration. For any start and end scan frequency the user
-chooses, these saved calibrations are used with linear interpolation.
-<br>
-
-<br>
 If vna_count is zero, the firmware is operating normally, and not in VNA mode.
+<br>
+
 <br>
 </div>
 
