@@ -26,6 +26,42 @@
 #define TEST_AUDIO	0
 
 
+#ifdef MS_WINDOWS
+#define QUISK_SHUT_RD	SD_RECEIVE
+#define QUISK_SHUT_BOTH	SD_BOTH
+#else
+#define SOCKET  int
+#define INVALID_SOCKET	-1
+#define QUISK_SHUT_RD	SHUT_RD
+#define QUISK_SHUT_BOTH	SHUT_RDWR
+#endif
+
+#if PY_MAJOR_VERSION >= 3
+#define PyInt_FromLong			PyLong_FromLong
+#define PyInt_Check			PyLong_Check
+#define PyInt_AsLong			PyLong_AsLong
+#define PyInt_AsUnsignedLongMask	PyLong_AsUnsignedLongMask
+#endif
+
+#define PyString_FromString		PyUnicode_FromString
+
+typedef enum _rx_mode {
+	CWL =		0,
+	CWU =		1,
+	LSB =		2,
+	USB =		3,
+	AM =		4,
+	FM =		5,
+	EXT =		6,
+	DGT_U =		7,
+	DGT_L =		8,
+	DGT_IQ =	9,
+	IMD =		10,
+	FDV_U =		11,
+	FDV_L =		12,
+	DGT_FM =	13
+} rx_mode_type;
+
 // Pulseaudio support added by Philip G. Lee.  Many thanks!
 /*!
  * \brief Specifies which driver a \c sound_dev is opened with
@@ -82,6 +118,7 @@ struct sound_dev {				// data for sound capture or playback device
 	int stream_format;			// format of pulseaudio device
 	int pulse_stream_state;		// state of the pulseaudio stream
 	volatile int cork_status;	// 1 for corked, 0 for uncorked
+	double average_square;		// average of squared sample magnitude
 } ;
 
 struct sound_conf {
@@ -124,7 +161,8 @@ enum quisk_rec_state {
 	RECORD_RADIO,
 	RECORD_MIC,
 	PLAYBACK,
-	PLAY_FILE } ;
+	PLAY_FILE,
+	PLAY_SAMPLES } ;
 extern enum quisk_rec_state quisk_record_state;
 
 struct QuiskWav {			// data to create a WAV or RAW audio file
@@ -155,14 +193,14 @@ extern int quiskSpotLevel;		// 0 for no spotting; else the level 10 to 1000
 extern int data_width;
 extern int quisk_using_udp;	// is a UDP port used for capture (0 or 1)?
 extern int quisk_rx_udp_started;		// have we received any data?
-extern int rxMode;				// mode CWL, USB, etc.
+extern rx_mode_type rxMode;			// mode CWL, USB, etc.
 extern int quisk_tx_tune_freq;	// Transmit tuning frequency as +/- sample_rate / 2
 extern PyObject * quisk_pyConfig;		// Configuration module instance
-extern long quisk_mainwin_handle;		// Handle of the main window
 extern double quisk_mic_preemphasis;	// Mic preemphasis 0.0 to 1.0; or -1.0
 extern double quisk_mic_clip;			// Mic clipping; try 3.0 or 4.0
 extern int quisk_noise_blanker;			// Noise blanker level, 0 for off
 extern int quisk_sidetoneCtrl;			// sidetone control value 0 to 1000
+extern int quiskKeyupDelay;			// key-up delay from the config file
 extern double quisk_audioVolume;		// volume control for radio sound playback, 0.0 to 1.0
 extern int quiskImdLevel;				// level for rxMode IMD
 extern int quiskTxHoldState;			// state machine for Tx wait for repeater frequency shift
@@ -172,10 +210,12 @@ extern unsigned char quisk_hermeslite_writequeue[4 * 5];	// One-time writes to H
 extern unsigned int quisk_hermeslite_writepointer;		// write pointer into write queue, nonzero value triggers writes, 
 extern unsigned int quisk_hermeslite_writeattempts;		// counter for write retries
 extern unsigned int quisk_hermes_code_version;			// Hermes code version from Hermes to PC
+extern unsigned int quisk_hermes_board_id;			// Hermes board ID from Hermes to PC
 extern int quisk_use_rx_udp;					// Method of access to UDP hardware
 extern complex double cRxFilterOut(complex double, int, int);
 extern int quisk_multirx_count;			// number of additional receivers zero or 1, 2, 3, ..
 extern struct sound_dev quisk_DigitalRx1Output;		// Output sound device for sub-receiver 1
+extern int quisk_is_vna;			// is this the VNA program?
 
 extern PyObject * quisk_set_spot_level(PyObject * , PyObject *);
 extern PyObject * quisk_get_tx_filter(PyObject * , PyObject *);
@@ -188,9 +228,13 @@ extern PyObject * quisk_sound_devices(PyObject * , PyObject *);
 extern PyObject * quisk_pa_sound_devices(PyObject * , PyObject *);
 extern PyObject * quisk_sound_errors(PyObject *, PyObject *);
 extern PyObject * quisk_set_file_record(PyObject *, PyObject *);
+extern PyObject * quisk_set_file_name(PyObject *, PyObject *, PyObject *);
 extern PyObject * quisk_set_tx_audio(PyObject *, PyObject *, PyObject *);
 extern PyObject * quisk_is_vox(PyObject *, PyObject *);
 extern PyObject * quisk_set_udp_tx_correct(PyObject *, PyObject *);
+extern PyObject * quisk_set_hermes_filter(PyObject *, PyObject *);
+extern PyObject * quisk_set_alex_hpf(PyObject *, PyObject *);
+extern PyObject * quisk_set_alex_lpf(PyObject *, PyObject *);
 
 extern PyObject * quisk_freedv_open(PyObject *, PyObject *);
 extern PyObject * quisk_freedv_close(PyObject *, PyObject *);
@@ -198,6 +242,7 @@ extern PyObject * quisk_freedv_get_snr(PyObject *, PyObject *);
 extern PyObject * quisk_freedv_get_version(PyObject *, PyObject *);
 extern PyObject * quisk_freedv_get_rx_char(PyObject *, PyObject *);
 extern PyObject * quisk_freedv_set_options(PyObject *, PyObject *, PyObject *);
+extern PyObject * quisk_set_sparams(PyObject *, PyObject *, PyObject *);
 
 // These function pointers are the Start/Stop/Read interface for
 // the SDR-IQ and any other C-language extension modules that return
@@ -205,11 +250,13 @@ extern PyObject * quisk_freedv_set_options(PyObject *, PyObject *, PyObject *);
 typedef void (* ty_sample_start)(void);
 typedef void (* ty_sample_stop)(void);
 typedef int  (* ty_sample_read)(complex double *);
+typedef int  (* ty_sample_write)(complex double *, int);
+extern ty_sample_write quisk_pt_sample_write;
 
 void quisk_open_sound(void);
 void quisk_close_sound(void);
 int quisk_process_samples(complex double *, int);
-void quisk_play_samples(double *, int);
+void quisk_play_samples(complex double *, int);
 void quisk_play_zeros(int);
 void quisk_start_sound(void);
 int quisk_get_overrange(void);
@@ -220,7 +267,6 @@ void quisk_open_mic(void);
 void quisk_close_mic(void);
 int quisk_open_key(const char *);
 void quisk_close_key(void);
-int quisk_is_key_down(void);
 void quisk_set_key_down(int);
 void quisk_set_tx_mode(void);
 void ptimer(int);
@@ -230,10 +276,11 @@ void quisk_tmp_record(complex double * , int, double);
 void quisk_file_microphone(complex double *, int);
 void quisk_file_playback(complex double *, int, double);
 void quisk_tmp_playback(complex double *, int, double);
-void quisk_hermes_tx_add(complex double *, int);
 void quisk_hermes_tx_send(int, int *);
 void quisk_udp_mic_error(char *);
 void quisk_check_freedv_mode(void);
+void quisk_calc_audio_graph(double, complex double *, double *, int, int);
+int QuiskDeltaMsec(int);
 
 // Functions supporting digital voice codecs
 typedef int  (* ty_dvoice_codec_rx)(complex double *, double *, int, int);
@@ -284,6 +331,8 @@ int import_quisk_api(void);	// used to initialize Quisk_API
 #define QuiskPrintTime		(*(	void	(*)	(const char *, int)	)Quisk_API[6])
 #define quisk_sample_source	(*(	void	(*)	(ty_sample_start, ty_sample_stop, ty_sample_read)	)Quisk_API[7])
 #define quisk_dvoice_freedv	(*(	void	(*)	(ty_dvoice_codec_rx, ty_dvoice_codec_tx)	)Quisk_API[8])
+#define quisk_is_key_down	(*(	int	(*)	(void)			)Quisk_API[9])
+#define quisk_sample_source4	(*(	void	(*)	(ty_sample_start, ty_sample_stop, ty_sample_read, ty_sample_write)	)Quisk_API[10])
 
 #else
 // Used to export symbols from _quisk in quisk.c
@@ -296,10 +345,13 @@ void	QuiskSleepMicrosec(int);
 void	QuiskPrintTime(const char *, int);
 void	quisk_sample_source(ty_sample_start, ty_sample_stop, ty_sample_read);
 void	quisk_dvoice_freedv(ty_dvoice_codec_rx, ty_dvoice_codec_tx);
+int	quisk_is_key_down(void);
+void	quisk_sample_source4(ty_sample_start, ty_sample_stop, ty_sample_read, ty_sample_write);
 
 #define QUISK_API_INIT	{ \
  &quisk_sound_state, &QuiskGetConfigInt, &QuiskGetConfigDouble, &QuiskGetConfigString, &QuiskTimeSec, \
- &QuiskSleepMicrosec, &QuiskPrintTime, &quisk_sample_source, &quisk_dvoice_freedv \
+ &QuiskSleepMicrosec, &QuiskPrintTime, &quisk_sample_source, &quisk_dvoice_freedv, &quisk_is_key_down, \
+ &quisk_sample_source4 \
  }
 
 #endif

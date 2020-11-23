@@ -36,6 +36,10 @@ void quisk_filt_tune(struct quisk_dFilter * filter, double freq, int ssb_upper)
 {	// Tune a filter into an analytic I/Q filter with complex coefficients.
 	// freq is the center frequency / sample rate.  Reverse coef if ssb_upper == 0.
 	// This is used for both quisk_dFilter and quisk_cFilter with a cast.
+	// Filter can be re-tuned repeatedly.
+	//
+	// The tuned low pass filter has a loss of 0.5 when applied to real signals.
+	// There is no loss applied to complex signals. Coeffs of the tuned filter are not symetric(??).
 	int i;
 	complex double coef, tune;
 	double D;
@@ -45,7 +49,7 @@ void quisk_filt_tune(struct quisk_dFilter * filter, double freq, int ssb_upper)
 	tune = I * 2.0 * M_PI * freq;
 	D = (filter->nTaps - 1.0) / 2.0;
 	for (i = 0; i < filter->nTaps; i++) {
-		coef = 2.0 * cexp(tune * (i - D)) * filter->dCoefs[i];
+		coef = cexp(tune * (i - D)) * filter->dCoefs[i];
 		if (ssb_upper)
 			filter->cpxCoefs[i] = coef;
 		else
@@ -128,7 +132,8 @@ int quisk_cInterpolate(complex double * cSamples, int count, struct quisk_cFilte
 				if (--ptSample < filter->cSamples)
 					ptSample = filter->cSamples + filter->nTaps - 1;
 			}
-			cSamples[nOut++] = csample * interp;
+			if (nOut < SAMP_BUFFER_SIZE * 8 / 10)
+				cSamples[nOut++] = csample * interp;
 		}
 		if (++filter->ptcSamp >= filter->cSamples + filter->nTaps)
 			filter->ptcSamp = filter->cSamples;
@@ -163,7 +168,8 @@ int quisk_dInterpolate(double * dSamples, int count, struct quisk_dFilter * filt
 				if (--ptSample < filter->dSamples)
 					ptSample = filter->dSamples + filter->nTaps - 1;
 			}
-			dSamples[nOut++] = dsample * interp;
+			if (nOut < SAMP_BUFFER_SIZE * 8 / 10)
+				dSamples[nOut++] = dsample * interp;
 		}
 		if (++filter->ptdSamp >= filter->dSamples + filter->nTaps)
 			filter->ptdSamp = filter->dSamples;
@@ -186,6 +192,34 @@ int quisk_cDecimate(complex double * cSamples, int count, struct quisk_cFilter *
 			csample = 0;
 			ptSample = filter->ptcSamp;
 			ptCoef = filter->dCoefs;
+			for (k = 0; k < filter->nTaps; k++, ptCoef++) {
+				csample += *ptSample  *  *ptCoef;
+				if (--ptSample < filter->cSamples)
+					ptSample = filter->cSamples + filter->nTaps - 1;
+			}
+			cSamples[nOut++] = csample;
+		}
+		if (++filter->ptcSamp >= filter->cSamples + filter->nTaps)
+			filter->ptcSamp = filter->cSamples;
+	}
+	return nOut;
+}
+
+int quisk_cCDecimate(complex double * cSamples, int count, struct quisk_cFilter * filter, int decim)
+{	// This uses the complex coefficients of filter (not the double). Call quisk_filt_tune() first.
+	int i, k, nOut;
+	complex double * ptSample;
+	complex double * ptCoef;
+	complex double csample;
+
+	nOut = 0;
+	for (i = 0; i < count; i++) {
+		*filter->ptcSamp = cSamples[i];
+		if (++filter->decim_index >= decim) {
+			filter->decim_index = 0;		// output a sample
+			csample = 0;
+			ptSample = filter->ptcSamp;
+			ptCoef = filter->cpxCoefs;
 			for (k = 0; k < filter->nTaps; k++, ptCoef++) {
 				csample += *ptSample  *  *ptCoef;
 				if (--ptSample < filter->cSamples)
@@ -255,7 +289,8 @@ int quisk_cInterpDecim(complex double * cSamples, int count, struct quisk_cFilte
 				if (--ptSample < filter->cSamples)
 					ptSample = filter->cSamples + filter->nTaps - 1;
 			}
-			cSamples[nOut++] = csample * interp;
+			if (nOut < SAMP_BUFFER_SIZE * 8 / 10)
+				cSamples[nOut++] = csample * interp;
 			filter->decim_index += decim;
 		}
 		if (++filter->ptcSamp >= filter->cSamples + filter->nTaps)
@@ -383,6 +418,8 @@ int quisk_dInterp2HB45(double * dsamples, int count, struct quisk_dHB45Filter * 
 	for (i = 0; i < count; i++) {
 		memmove(samples + 1, samples, (nSamp - 1) * sizeof(double));
 		samples[0] = filter->dBuf[i];
+		if (nOut > SAMP_BUFFER_SIZE * 8 / 10)
+			continue;
 		dsamples[nOut++] = samples[nCoef - 1] * coef[nCoef - 1] * 2;
 		out = 0;
 		for (k = 0; k < nSamp / 2; k++)
@@ -416,6 +453,8 @@ int quisk_cInterp2HB45(complex double * cSamples, int count, struct quisk_cHB45F
 	for (i = 0; i < count; i++) {
 		memmove(samples + 1, samples, (nSamp - 1) * sizeof(complex double));
 		samples[0] = filter->cBuf[i];
+		if (nOut > SAMP_BUFFER_SIZE * 8 / 10)
+			continue;
 		cSamples[nOut++] = samples[nCoef - 1] * coef[nCoef - 1] * 2;
 		out = 0;
 		for (k = 0; k < nSamp / 2; k++)

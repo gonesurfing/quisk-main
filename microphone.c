@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include "microphone.h"
 #include "filter.h"
+#include "freedv.h"
 
 #ifdef MS_WINDOWS
 #include <Winsock2.h>
@@ -16,10 +17,12 @@ static int mic_cleanup = 0;		// must clean up winsock
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#define		INVALID_SOCKET	-1
 #endif
 
-#if DEBUG_IO
+#define DEBUG   0
+#define DEBUG_LEVEL	0
+
+#if DEBUG_LEVEL || DEBUG_IO || DEBUG
 static int debug_timer = 1;		// count up number of samples
 #endif
 
@@ -37,12 +40,28 @@ double quisk_mic_clip;
 // If true, decimate 48000 sps mic samples to 8000 sps for processing
 #define DECIM_8000	1
 
+struct alc {
+	complex double * buffer;
+	int buf_size;
+	int index;
+	int block_index;
+	int counter;
+	int fault;
+	double max_magn;
+	double gain_now[20];
+	double gain_max;
+	double gain_min;
+	double gain_change;
+	double next_change;
+	double final_gain;
+} ;
+
 // These are external:
 int mic_max_display;				// display value of maximum microphone signal level 0 to 2**15 - 1
 int quiskSpotLevel = -1;			// level is -1 for Spot button Off; else the Spot level 0 to 1000.
 int quiskImdLevel = 500;			// level for rxMode IMD, 0 to 1000
 
-static int mic_socket = INVALID_SOCKET;	// send microphone samples to a socket
+static SOCKET mic_socket = INVALID_SOCKET;	// send microphone samples to a socket
 static double mic_agc_level = 0.10;		// Mic levels below this are noise and are ignored
 
 static int mic_level;			// maximum microphone signal level for display
@@ -53,6 +72,8 @@ static double modulation_index = 1.6;	// For FM transmit, the modulation index
 static int is_vox = 0;					// Is the VOX level exceeded?
 static int vox_level = CLIP16;			// VOX trigger level as a number 0 to CLIP16
 static int timeVOX = 2000;				// VOX hang time in milliseconds
+static int tx_sample_rate = 48000;	// Used for SoapySDR
+static int reverse_tx_sideband;
 
 static int doTxCorrect = 0;				// Corrections for UDP sample transmit
 static double TxCorrectLevel;
@@ -65,13 +86,19 @@ static int hermes_read_index;			// index to read from buffer
 static int hermes_write_index;			// index to write to buffer
 static int hermes_num_samples;			// number of samples in the buffer
 static short hermes_buf[HERMES_TX_BUF_SHORTS];		// buffer to store Tx I/Q samples waiting to be sent at 48 ksps
+static int hermes_filter_rx;		// hermes filter to use for Rx
+static int hermes_filter_tx;		// hermes filter to use for Tx
+static int alex_hpf_rx;                 // Alex HPF to use for Rx
+static int alex_hpf_tx;                 // Alex HPF to use for Tx
+static int alex_lpf_rx;                 // Alex LPF to use for Rx
+static int alex_lpf_tx;                 // Alex LPF to use for Tx
 
 #define TX_BLOCK_SHORTS		600		// transmit UDP packet with this many shorts (two bytes) (perhaps + 1)
 #define MIC_MAX_HOLD_TIME	400		// Time to hold the maximum mic level on the Status screen in milliseconds
 
 // If USE_GET_SIN is not zero, replace mic samples with a sin wave at a
 // frequency determined by the sidetone slider and an amplitude determined
-// by the Spot button level.
+// by the Spot button level. LEVEL FAILS
 // If USE_GET_SIN is 1, pass these samples through the transmit filters.
 // If USE_GET_SIN is 2, transmit these samples directly.
 #define USE_GET_SIN		0
@@ -101,7 +128,7 @@ static void get_sin(complex double * cSamples, int count)
 		vector1 *= phase1;
 		cSamples[i] = vector1;
 	}
-#if DEBUG_IO
+#if DEBUG_IO || DEBUG
 	if (debug_timer == 0)
 		printf ("get_sin freq %.0lf\n", freq);
 #endif
@@ -204,6 +231,145 @@ static double CcmPeak(double * dsamples, complex double * csamples, int count)
 	return dat.level;
 }
 
+static void init_alc(struct alc * pt, int size)
+{  // Call first to set the buffer size. Then call to initialize the structure on each key down.
+	int i;
+
+	if (pt->buffer == NULL) {
+		pt->buf_size = size;	// do not change the size
+		pt->buffer = (complex double *)malloc(size * sizeof(complex double));
+		for (i = 0; i < 20; i++)	// initial gain by rx_mode
+			switch(i) {
+			case DGT_U:
+			case DGT_L:
+			case DGT_IQ:
+				pt->gain_now[i] = 1.4;
+				break;
+			case FDV_U:
+			case FDV_L:
+				pt->gain_now[i] = 2.0;
+				break;
+			default:
+				pt->gain_now[i] = 1.0;
+				break;
+			}
+	}
+	pt->index = 0;
+	pt->block_index = 0;
+	pt->counter = 0;
+	pt->fault = 0;
+	pt->max_magn = 0;
+	pt->gain_max = 3.0;
+	pt->gain_min = 0.1;
+	pt->gain_change = 0;
+	pt->next_change = 0;
+	pt->final_gain = 0;
+	for (i = 0; i < pt->buf_size; i++)
+		pt->buffer[i] = 0;
+}
+
+static void process_alc(complex double * cSamples, int count, struct alc * pt, rx_mode_type rx_mode)
+{  // Automatic Level Control (ALC)
+	int i;
+	double d, magn;
+	complex double csamp;
+
+	for (i = 0; i < count; i++) {
+		csamp = cSamples[i];			// new sample to add to buffer
+		cSamples[i] = pt->buffer[pt->index] * pt->gain_now[rx_mode];		// remove sample from buffer and apply gain
+#if DEBUG_LEVEL || DEBUG_IO || DEBUG
+		magn = cabs(cSamples[i]);
+		if (magn >= CLIP16)
+			printf("ALC clip gain %9.6f level %9.6f\n", pt->gain_now[rx_mode], magn / CLIP16);
+#endif
+		pt->buffer[pt->index] = csamp;		// add new sample to buffer
+		magn = cabs(csamp);			// measure new sample
+		if (magn * (pt->gain_now[rx_mode] + pt->gain_change * pt->buf_size) > (CLIP16 - 10)) {
+			pt->gain_change = ((CLIP16 - 10) / magn - pt->gain_now[rx_mode]) / pt->buf_size;
+			pt->final_gain = pt->gain_now[rx_mode] + pt->gain_change * pt->buf_size;
+			if (pt->final_gain > pt->gain_max) {
+				pt->final_gain = pt->gain_max;
+				pt->gain_change = (pt->final_gain - pt->gain_now[rx_mode]) / pt->buf_size;
+			}
+			else if (pt->final_gain < pt->gain_min) {
+				pt->final_gain = pt->gain_min;
+				pt->gain_change = (pt->final_gain - pt->gain_now[rx_mode]) / pt->buf_size;
+			}
+			pt->block_index = pt->index;
+			pt->counter = 0;
+			pt->fault = 0;
+			pt->next_change = 1E10;
+			//printf("ALC DEC: gain %9.6f change %9.6f final gain %9.6f\n", pt->gain_now[rx_mode], pt->gain_change, pt->final_gain);
+		}
+		else if (pt->index == pt->block_index) {
+			//d = cabs(cSamples[i]) / (CLIP16 - 10);
+			//printf("ALC Fin: gain %9.6f out level %9.6f\n", pt->gain_now[rx_mode], d);
+#if 0
+			alc_start_gain = alc_gain;
+			k = alc_block_index;
+			for (j = 1; j < pt->buf_size; j++) {
+				if (++k >= pt->buf_size)
+					k = 0;
+				magn = cabs(alc_buffer[k]);
+				if (magn < 100) {
+					alc_fault++;
+					continue;
+				}
+				else {
+					d = ((CLIP16 - 10) / magn - alc_start_gain) / j;
+					if ( alc_next_change > d)
+						alc_next_change = d;
+				}
+			}
+#endif
+			d = 5.0;	// number of seconds to double gain
+			d = 1.0  / (48000.0 * d);
+			if (pt->next_change > d)
+				pt->next_change = d;
+			if (pt->next_change != 1E10 && pt->fault < pt->buf_size - 10) {
+				pt->gain_change = pt->next_change;
+			}
+			pt->final_gain = pt->gain_now[rx_mode] + pt->gain_change * pt->buf_size;
+			if (pt->final_gain > pt->gain_max) {
+				pt->final_gain = pt->gain_max;
+				pt->gain_change = (pt->final_gain - pt->gain_now[rx_mode]) / pt->buf_size;
+			}
+			else if (pt->final_gain < pt->gain_min) {
+				pt->final_gain = pt->gain_min;
+				pt->gain_change = (pt->final_gain - pt->gain_now[rx_mode]) / pt->buf_size;
+			}
+			//printf("ALC New: gain %9.6f change %9.6f final gain %9.6f\n", pt->gain_now[rx_mode], pt->gain_change, pt->final_gain);
+			pt->fault = 0;
+			pt->counter = 0;
+			pt->next_change = 1E10;
+		}
+		else {
+			if (magn < 100) {
+				pt->fault++;
+			}
+			else {
+				d = ((CLIP16 - 10) / magn - pt->final_gain) / ++pt->counter;
+				if ( pt->next_change > d)
+					pt->next_change = d;
+			}
+		}
+		pt->gain_now[rx_mode] += pt->gain_change;
+		if (++pt->index >= pt->buf_size)
+			pt->index = 0;
+	}
+#if DEBUG_LEVEL || DEBUG_IO || DEBUG
+	for (i = 0; i < count; i++) {
+		magn = cabs(cSamples[i]);
+		if (pt->max_magn < magn)
+			pt->max_magn = magn;
+	}
+	if (debug_timer == 0) {
+		printf("ALC Out: gain %9.6f max lvl%9.6f final gain %9.6f\n", pt->gain_now[rx_mode], pt->max_magn / CLIP16, pt->final_gain);
+		pt->max_magn = 0;
+	}
+#endif
+}
+
 static int tx_filter(complex double * filtered, int count)
 {	// Input samples are creal(filtered), output is filtered.  The input rate must be 8000 or 48000 sps.
 	int i, is_ssb;
@@ -221,11 +387,11 @@ static int tx_filter(complex double * filtered, int count)
 	static struct quisk_dFilter filtAudio1, filtAudio2, dfiltAudio3;
 	static struct quisk_cFilter cfiltAudio3, cfiltInterp;
 	static struct quisk_dFilter filter1={NULL}, filter2;
-#if DEBUG_IO
+#if DEBUG_IO || DEBUG
 	char * clip;
 	static double dbOut = 0, Level0 = 0, Level1 = 0, Level2 = 0, Level3 = 0, Level4 = 0;
 #endif
-	is_ssb = (rxMode == 2 || rxMode == 3);
+	is_ssb = (rxMode == LSB || rxMode == USB);
 	if (!filtered) {		// initialization
 		if (! filter1.dCoefs) {
 			quisk_filt_dInit(&filter1, quiskMicFilt8Coefs, sizeof(quiskMicFilt8Coefs)/sizeof(double));
@@ -246,14 +412,14 @@ static int tx_filter(complex double * filtered, int count)
 			aaa = 1.0 / (2.0 * (Xmin - Xmax));		// quadratic
 			bbb = -2.0 * aaa * Xmax;
 			ccc = Ymax - aaa * Xmax * Xmax - bbb * Xmax;
-#if DEBUG_IO
+#if DEBUG_IO || DEBUG
 			printf("Compress to %.2lf dB from %.2lf to %.2lf dB\n",
 				20 * log10(Ymax), 20 * log10(Xmin), 20 * log10(Xmax));
 #endif
 		}
 		if (is_ssb) {
-		  quisk_filt_tune(&filter1, 1650.0 / sample_rate, rxMode != 2);
-		  quisk_filt_tune(&filter2, 1650.0 / sample_rate, rxMode != 2);
+		  quisk_filt_tune(&filter1, 1650.0 / sample_rate, rxMode != LSB);
+		  quisk_filt_tune(&filter2, 1650.0 / sample_rate, rxMode != LSB);
 		}
 		return 0;
 	}
@@ -275,7 +441,7 @@ static int tx_filter(complex double * filtered, int count)
 		count = quisk_dDecimate(dsamples, count, &filtDecim, quisk_sound_state.mic_sample_rate / sample_rate);
 	// restrict bandwidth 300 to 2700 Hz
 	count = quisk_dFilter(dsamples, count, &filtAudio1);
-#if DEBUG_IO
+#if DEBUG_IO || DEBUG
 	// Measure peak input audio level
 	for (i = 0; i < count; i++) {
 		magn = fabs(dsamples[i]);
@@ -291,7 +457,7 @@ static int tx_filter(complex double * filtered, int count)
 		dsamples[i] = dtmp - quisk_mic_preemphasis * x_1;
 		x_1 = dtmp;	// delayed sample
 		dsamples[i] *= 2;		// compensate for loss
-#if DEBUG_IO
+#if DEBUG_IO || DEBUG
 		magn = fabs(dsamples[i]);
 		if (magn > Level1)
 			Level1 = magn;
@@ -300,7 +466,7 @@ static int tx_filter(complex double * filtered, int count)
 	if (is_ssb) {	// SSB
 		// FIR bandpass filter; separate into I and Q
 		for (i = 0; i < count; i++) {
-			csample = quisk_dC_out(dsamples[i], &filter1);
+			csample = quisk_dC_out(dsamples[i], &filter1) * 2.0;	// filter loss 0.5
 			// Measure average peak input audio level and normalize
 			magn = cabs(csample);
 			if (magn > inMax)
@@ -311,7 +477,7 @@ static int tx_filter(complex double * filtered, int count)
 				inMax = inMax * (1 - time_long) + time_long * mic_agc_level;
 			csample /= inMax;
 			magn /= inMax;
-#if DEBUG_IO
+#if DEBUG_IO || DEBUG
 			if (magn > Level2)
 				Level2 = magn;
 #endif
@@ -336,7 +502,7 @@ static int tx_filter(complex double * filtered, int count)
 				inMax = inMax * (1 - time_long) + time_long * mic_agc_level;
 			dsample /= inMax;
 			magn /= inMax;
-#if DEBUG_IO
+#if DEBUG_IO || DEBUG
 			if (magn > Level2)
 				Level2 = magn;
 #endif
@@ -356,8 +522,8 @@ static int tx_filter(complex double * filtered, int count)
 	if (is_ssb) {	// SSB
 		// FIR bandpass filter; separate into I and Q
 		for (i = 0; i < count; i++) {
-			csamples[i] = quisk_dC_out(dsamples[i], &filter2);
-#if DEBUG_IO
+			csamples[i] = quisk_dC_out(dsamples[i], &filter2) * 2.0;	// filter loss 0.5
+#if DEBUG_IO || DEBUG
 			magn = cabs(csamples[i]);
 			if (magn > Level3)
 				Level3 = magn;
@@ -365,7 +531,7 @@ static int tx_filter(complex double * filtered, int count)
 		}
 		// round off peaks
 		CcmPeak(NULL, csamples, count);
-#if DEBUG_IO
+#if DEBUG_IO || DEBUG
 		for (i = 0; i < count; i++) {
 			magn = cabs(csamples[i]);
 			if (magn > Level4)
@@ -377,22 +543,18 @@ static int tx_filter(complex double * filtered, int count)
 		// Interpolate up to 48000
 		if (MIC_OUT_RATE != sample_rate)
 			count = quisk_cInterpolate(csamples, count, &cfiltInterp, MIC_OUT_RATE / sample_rate);
-		// convert back to 16 bits and reduce level to allow headroom
+		// convert back to 16 bits
 		for (i = 0; i < count; i++) {
-			csamples[i] /= 1.3;
+			filtered[i] = csamples[i] * CLIP16;
+#if DEBUG_IO || DEBUG
 			magn = cabs(csamples[i]);
-			if (magn > 1.0)
-				filtered[i] = csamples[i] / magn * CLIP16;
-			else
-				filtered[i] = csamples[i] * CLIP16;
-#if DEBUG_IO
 			if (magn > dbOut)
 				dbOut = magn;
 #endif
 		}
 	}
 	else {		// AM and FM
-#if DEBUG_IO
+#if DEBUG_IO || DEBUG
 		for (i = 0; i < count; i++) {
 			magn = fabs(dsamples[i]);
 			if (magn > Level3)
@@ -401,7 +563,7 @@ static int tx_filter(complex double * filtered, int count)
 #endif
 		// round off peaks
 		CcmPeak(dsamples, NULL, count);
-#if DEBUG_IO
+#if DEBUG_IO || DEBUG
 		for (i = 0; i < count; i++) {
 			magn = fabs(dsamples[i]);
 			if (magn > Level4)
@@ -413,21 +575,17 @@ static int tx_filter(complex double * filtered, int count)
 		// Interpolate up to 48000
 		if (MIC_OUT_RATE != sample_rate)
 			count = quisk_dInterpolate(dsamples, count, &dfiltInterp, MIC_OUT_RATE / sample_rate);
-		// convert back to 16 bits and reduce level to allow headroom
+		// convert back to 16 bits
 		for (i = 0; i < count; i++) {
-			dsamples[i] /= 1.3;
+			filtered[i] = dsamples[i] * CLIP16;
+#if DEBUG_IO || DEBUG
 			magn = fabs(dsamples[i]);
-#if DEBUG_IO
 			if (magn > dbOut)
 				dbOut = magn;
 #endif
-			if (magn > 1.0)
-				filtered[i] = dsamples[i] / magn * CLIP16;
-			else
-				filtered[i] = dsamples[i] * CLIP16;
 		}
 	}
-#if DEBUG_IO
+#if DEBUG_IO || DEBUG
 	if (debug_timer == 0) {
 		if (dbOut > 1.0)
 			clip = "Clip";
@@ -444,57 +602,24 @@ static int tx_filter(complex double * filtered, int count)
 	return count;
 }
 
-static int tx_filter_digital(complex double * filtered, int count, double volume)
+static int tx_filter_digital(complex double * filtered, int count)
 {	// Input samples are creal(filtered), output is filtered.
 	// This filter has minimal processing and is used for digital modes.
 	int i;
-	double dsample, amplitude;
-	complex double csample;
+	static int do_init = 1;
 
 	static struct quisk_dFilter filter1;
-#if DEBUG_IO
-	double x;
-	static double peakIn = 0, peakOut2 = 0;		// input/output level
-#endif
-	if (!filtered) {		// initialization
-		quisk_filt_dInit(&filter1, quiskMic5Filt48Coefs, sizeof(quiskMic5Filt48Coefs)/sizeof(double));
-		quisk_filt_tune(&filter1, 2650.0 / 48000, rxMode != 8 && rxMode != 2);
+	if (do_init) {		// initialization
+		do_init = 0;
+		quisk_filt_dInit(&filter1, quiskDgtFilt48Coefs, sizeof(quiskDgtFilt48Coefs)/sizeof(double));    // pass 1350, stop 1650
+	}
+	if ( ! filtered) {	// Change to rxMode
+		quisk_filt_tune(&filter1, 1650.0 / 48000, rxMode != DGT_L && rxMode != LSB);
 		return 0;
 	}
-#if DEBUG_IO
-	//QuiskPrintTime("", -2);
-#endif
-	for (i = 0; i < count; i++) {
-		dsample = creal(filtered[i]) / CLIP16;		// normalize to +/- 1.0
-#if DEBUG_IO
-		x = fabs(dsample);
-		if (x > peakIn)
-			peakIn = x;
-#endif
-		// FIR bandpass filter; separate into I and Q
-		csample = quisk_dC_out(dsample, &filter1);
-		amplitude = cabs(csample);
-#if DEBUG_IO
-		if (amplitude > peakOut2)
-			peakOut2 = amplitude;
-#endif
-		if (amplitude > 1.0)
-			csample /= amplitude;
-		filtered[i] = csample * CLIP16 * volume;		// convert back to 16 bits
-	}
-
-//printf("%5.2lf\n", increasing);
-#if DEBUG_IO
-	if (debug_timer == 0) {
-		printf ("peakIn %10.6lf  peakOut2 %10.6lf", peakIn, peakOut2);
-		if (peakOut2 > 1.0)
-			printf ("  CLIP\n");
-		else
-			printf ("\n");
-		peakIn = peakOut2 = 0;
-	}
-	//QuiskPrintTime("    tx_filter", 2);
-#endif
+	for (i = 0; i < count; i++)	// FIR bandpass filter; separate into I and Q
+		filtered[i] = quisk_dC_out(creal(filtered[i]), &filter1) * 2.00;	// tuned filter loss 0.5
+	//quisk_calc_audio_graph(CLIP16, filtered, NULL, count, 0);
 	return count;
 }
 
@@ -505,22 +630,23 @@ static int tx_filter_freedv(complex double * filtered, int count, int encode)
 	int sample_rate = 8000;
 	double dtmp, magn, dsample;
 	static int samples_size = 0;
+	static int last_mode;
+	static int do_init = 1;
 	static double aaa, bbb, ccc, Xmin, Xmax, Ymax;
 	static double time_long, time_short;
-	static double x_1=0;
 	static double inMax=0.3;
 	static double * dsamples = NULL;
-	static struct quisk_dFilter filter2, filtDecim;
+	static struct quisk_cFilter filter2;
+	static struct quisk_dFilter filtDecim;
 	static struct quisk_cFilter cfiltInterp;
-#if DEBUG_IO
-	double x;
-	static double peakIn = 0, peakOut2 = 0;		// input/output level
-#endif
 
-	if (!filtered) {		// initialization
-		quisk_filt_dInit(&filter2, quiskMicFilt8Coefs, sizeof(quiskMicFilt8Coefs)/sizeof(double));
-		quisk_filt_tune(&filter2, 1650.0 / sample_rate, rxMode != 12);
-		quisk_filt_dInit(&filtDecim,  quiskLpFilt48Coefs, sizeof(quiskLpFilt48Coefs)/sizeof(double));
+	if (do_init) {		// initialization
+		//QuiskWavWriteOpen(&hWav, "jim.wav", 3, 1, 4, 8000, 1.0 / CLIP16);
+		do_init = 0;
+		quisk_filt_cInit(&filter2, quiskFilt53D2Coefs, sizeof(quiskFilt53D2Coefs)/sizeof(double));  // pass 1500, stop 1800
+		quisk_filt_tune((struct quisk_dFilter *)&filter2, 1600.0 / 8000, 1);	// upper sideband
+		last_mode = 11;
+		quisk_filt_dInit(&filtDecim,  quiskLpFilt48Coefs, sizeof(quiskLpFilt48Coefs)/sizeof(double));   // pass 3000, stop 4000
 		quisk_filt_cInit(&cfiltInterp, quiskLpFilt48Coefs, sizeof(quiskLpFilt48Coefs)/sizeof(double));
 		dtmp = 1.0 / sample_rate;		// sample time
 		time_long   = 1.0 - exp(- dtmp / 3.000);
@@ -528,11 +654,23 @@ static int tx_filter_freedv(complex double * filtered, int count, int encode)
 		Ymax = pow(10.0,  - 1 / 20.0);				// maximum y
 		Xmax = pow(10.0,  3 / 20.0);				// x where slope is zero; for x > Xmax, y == Ymax
 		Xmin = Ymax - fabs(Ymax - Xmax);			// x where slope is 1 and y = x; start of compression
+		//printf ("Xmin %f\n", Xmin);
 		aaa = 1.0 / (2.0 * (Xmin - Xmax));			// quadratic
 		bbb = -2.0 * aaa * Xmax;
 		ccc = Ymax - aaa * Xmax * Xmax - bbb * Xmax;
-		return 0;
 	}
+	if (last_mode != rxMode) {	// change to sideband
+		if (rxMode == FDV_U) {	 // upper sideband
+			last_mode = rxMode;
+			quisk_filt_tune((struct quisk_dFilter *)&filter2, 1600.0 / 8000, 1);
+		}
+		else if (rxMode == FDV_L) {   // lower sideband
+			last_mode = rxMode;
+			quisk_filt_tune((struct quisk_dFilter *)&filter2, 1600.0 / 8000, 0);
+		}
+	}
+	if ( ! filtered)
+		return 0;
 	// check size of dsamples[] buffer
 	if (count > samples_size) {
 		samples_size = count * 2;
@@ -542,20 +680,11 @@ static int tx_filter_freedv(complex double * filtered, int count, int encode)
 	}
 	// copy to dsamples[]
 	for (i = 0; i < count; i++)
-		dsamples[i] = creal(filtered[i]) / CLIP16;
+		dsamples[i] = creal(filtered[i]) / CLIP16;	// normalize to 1.0000
 	// Decimate to 8000 Hz
 	if (quisk_sound_state.mic_sample_rate != sample_rate)
 		count = quisk_dDecimate(dsamples, count, &filtDecim, quisk_sound_state.mic_sample_rate / sample_rate);
-	// high pass filter for preemphasis: See Radcom, January 2010, page 76.
-	// quisk_mic_preemphasis == 1 was measured as 6 dB / octave.
-	// gain at 800 Hz was measured as 0.104672.
-	for (i = 0; i < count; i++) {
-		dtmp = dsamples[i];
-		dsamples[i] = dtmp - quisk_mic_preemphasis * x_1;
-		x_1 = dtmp;	// delayed sample
-		dsamples[i] *= 2;		// compensate for loss
-	}
-	// Measure average peak input audio level and normalize
+	// Measure average peak input audio level and limit
 	for (i = 0; i < count; i++) {
 		dsample = dsamples[i];
 		magn = fabs(dsample);
@@ -565,44 +694,25 @@ static int tx_filter_freedv(complex double * filtered, int count, int encode)
 			inMax = inMax * (1 - time_long) + time_long * magn;
 		else
 			inMax = inMax * (1 - time_long) + time_long * mic_agc_level;
-		dsample /= inMax;
-		magn /= inMax;
-		// Audio compression.
-		dsample *= quisk_mic_clip;
-		magn *= quisk_mic_clip;
+		dsample = dsample / inMax * Xmin * 0.7;
+		magn = fabs(dsample);
 		if (magn < Xmin)
 			dsamples[i] = dsample;
 		else if (magn > Xmax)
 			dsamples[i] = copysign(Ymax, dsample);
 		else
 			dsamples[i] = copysign(aaa * magn * magn + bbb * magn + ccc, dsample);
-#if DEBUG_IO
-		x = fabs(dsamples[i]);
-		if (x > peakIn)
-			peakIn = x;
-#endif
 		dsamples[i] = dsamples[i] * CLIP16;
 	}
+	//QuiskWavWriteD(&hWav, dsamples, count);
 	if (encode && pt_quisk_freedv_tx)   // Encode audio into digital modulation
 		count = (* pt_quisk_freedv_tx)(filtered, dsamples, count);
+	//quisk_calc_audio_graph(CLIP16, filtered, NULL, count, 0);
+	if (freedv_current_mode != FREEDV_MODE_700D)   // 700D has its own filter
+		count = quisk_cCDecimate(filtered, count, &filter2, 1);
 	// Interpolate up to 48000
 	if (MIC_OUT_RATE != sample_rate)
 		count = quisk_cInterpolate(filtered, count, &cfiltInterp, MIC_OUT_RATE / sample_rate);
-#if DEBUG_IO
-	for (i = 0; i < count; i++) {
-		magn = cabs(filtered[i]) / CLIP16;
-		if (magn > peakOut2)
-			peakOut2 = magn;
-	}
-	if (debug_timer == 0) {
-		printf ("peakIn %10.6lf  peakOut2 %10.6lf", peakIn, peakOut2);
-		if (peakOut2 > 1.0)
-			printf ("  CLIP\n");
-		else
-			printf ("\n");
-		peakIn = peakOut2 = 0;
-	}
-#endif
 	return count;
 }
 
@@ -701,57 +811,91 @@ PyObject * quisk_get_tx_filter(PyObject * self, PyObject * args)
 // All samples are 2 bytes.  The 1032 byte UDP packet contains 63*2 radio sound samples, and 63*2 mic I/Q samples.
 // Samples are sent synchronously with the input samples.
 
-void quisk_hermes_tx_add(complex double * cSamples, int tx_count)
-{	// Add samples to the Tx buffer
+static void quisk_hermes_tx_reset(void)
+{   // Reset the buffer to half full of zero samples
 	int i;
 
+	hermes_num_samples = HERMES_TX_BUF_SAMPLES / 2;
+	hermes_read_index = 0;
+	hermes_write_index = hermes_num_samples * 2;
+	for (i = 0; i < HERMES_TX_BUF_SHORTS; i++)	// Put zero mic samples into the buffer
+		hermes_buf[i] = 0;
+	//printf("quisk_hermes_tx_reset: hermes_num_samples %d\n", hermes_num_samples);
+}
+
+static void quisk_hermes_tx_add(complex double * cSamples, int tx_count, int key_down)
+{	// Add samples to the Tx buffer.
+	int i;
+	static int hermes_buf_has_samples=1;
+
+	if (key_down) {		// add non-zero samples to buffer
+		hermes_buf_has_samples = 1;
+	}
+	else if (hermes_buf_has_samples) {	// key is not down; reset buffer to zero
+		quisk_hermes_tx_reset();
+		hermes_buf_has_samples = 0;
+		return;
+	}
+	else {		// key is not down but buffer is zeroed; just reset pointers
+		hermes_num_samples = HERMES_TX_BUF_SAMPLES / 2;
+		hermes_read_index = 0;
+		hermes_write_index = hermes_num_samples * 2;
+		return;
+	}
+	//printf("hermes_tx_add start: hermes_num_samples %d, tx_count %d\n", hermes_num_samples, tx_count);
 	if (hermes_num_samples + tx_count >= HERMES_TX_BUF_SAMPLES) {	// no more space; throw away half the samples
 		quisk_udp_mic_error("Tx hermes buffer overflow");
-		//printf("Tx hermes buffer overflow\n");
-		i = HERMES_TX_BUF_SAMPLES / 2;
+		//printf("Tx hermes buffer overflow: hermes_num_samples %d tx_count %d\n", hermes_num_samples, tx_count);
+		i = hermes_num_samples - HERMES_TX_BUF_SAMPLES / 2;	// number of samples to remove
 		hermes_num_samples -= i;
-		hermes_write_index -= i * 2;
-		if (hermes_write_index < 0)
-			hermes_write_index += HERMES_TX_BUF_SHORTS;
+		hermes_read_index += i * 2;
+		if (hermes_read_index >= HERMES_TX_BUF_SHORTS)
+			hermes_read_index -= HERMES_TX_BUF_SHORTS;
 	}
 	hermes_num_samples += tx_count;
-	if (cSamples) {
-		for (i = 0; i < tx_count; i++) {			// Put transmit mic samples into the buffer
-			hermes_buf[hermes_write_index++] = (short)cimag(cSamples[i]);
-			hermes_buf[hermes_write_index++] = (short)creal(cSamples[i]);
-			if (hermes_write_index >= HERMES_TX_BUF_SHORTS)
-				hermes_write_index = 0;
-		}
+	for (i = 0; i < tx_count; i++) {			// Put transmit mic samples into the buffer
+		hermes_buf[hermes_write_index++] = (short)cimag(cSamples[i]);
+		hermes_buf[hermes_write_index++] = (short)creal(cSamples[i]);
+		if (hermes_write_index >= HERMES_TX_BUF_SHORTS)
+			hermes_write_index = 0;
 	}
-	else {
-		for (i = 0; i < tx_count; i++) {			// Put zero mic samples into the buffer
-			hermes_buf[hermes_write_index++] = 0;
-			hermes_buf[hermes_write_index++] = 0;
-			if (hermes_write_index >= HERMES_TX_BUF_SHORTS)
-				hermes_write_index = 0;
-		}
-	}
+	//printf ("Buffer usage %.1f %%, hermes_num_samples %d, tx_count %d\n", 100.0 * hermes_num_samples / HERMES_TX_BUF_SAMPLES, hermes_num_samples, tx_count);
+	//printf("hermes_tx_add end: hermes_num_samples %d\n", hermes_num_samples);
 }
 
 void quisk_hermes_tx_send(int tx_socket, int * tx_records)
-{	// Send mic samples using the Metis-Hermes protocol.  Timing is from blocks received, rate is 48k.
-	int i, offset, key_down, sent, ratio;
+{	// Send one UDP block of mic samples using the Metis-Hermes protocol.  Timing is from blocks received, rate is 48k.
+	// If the key is up we send samples anyway, but the samples are zero.
+	int i, offset, sent, ratio;
 	short s;
 	unsigned char sendbuf[1032];
 	unsigned char * pt_buf;
 	static unsigned int seq = 0;
 	static unsigned char C0_index = 0;
+	static int mox_bit=0;	// On key up, send some zero samples before releasing the T/R relay to Rx.
+	static int mox_counter;	// Timer for key-up delay.
 	unsigned int hlwp = 0;
 
+	//printf("hermes_tx_send start 1: hermes_num_samples %d\n", hermes_num_samples);
 	if (tx_records == NULL) {
 		seq = 0;
 		C0_index = 0;
-		hermes_read_index = 0;
-		hermes_write_index = 0;
-		hermes_num_samples = 0;
-		quisk_hermes_tx_add(NULL, HERMES_TX_BUF_SAMPLES / 2);
+		quisk_hermes_tx_reset();
 		return;
 	}
+	if (quisk_is_key_down()) {
+		mox_bit = 1;
+		mox_counter = (int)((quiskKeyupDelay + 30) / 2.625 + 0.5);	// 126 samples per block / 48000 == 2.625 msec
+	}
+	else {	// Delay un-setting the MOX bit and continue sending zero-valued samples; when Tx signal is zero, unset MOX.
+		if (mox_bit) {		// This allows the Tx signal to go to zero before switching T/R relay.
+			if (mox_counter > 0)
+				mox_counter--;
+			else
+				mox_bit = 0;
+		}
+	}
+	//printf("hermes_tx_send start 2: hermes_num_samples %d\n", hermes_num_samples);
 	ratio = quisk_sound_state.sample_rate / 48000;		// send rate is 48 ksps
 	//printf ("quisk_hermes_tx_send ratio %d count %d\n", ratio, *tx_records);
 	if (*tx_records / ratio < 63 * 2)		// tx_records is the number of samples received for each receiver
@@ -761,9 +905,9 @@ void quisk_hermes_tx_send(int tx_socket, int * tx_records)
 	//printf ("Tx  quisk_hermes_tx_send ratio %d, count %d, samples %d\n", ratio, *tx_records, hermes_num_samples);
 	*tx_records -= 63 * 2 * ratio;
 	if (hermes_num_samples < 63 * 2) {	// Not enough samples to send
-		//printf("Tx hermes buffer underflow\n");
+		//printf("Tx hermes buffer underflow: hermes_num_samples %d\n", hermes_num_samples);
 		quisk_udp_mic_error("Tx hermes buffer underflow");
-		quisk_hermes_tx_add(NULL, HERMES_TX_BUF_SAMPLES / 2);
+		quisk_hermes_tx_reset();
 	}
 	hermes_num_samples -= 63 * 2;
 	sendbuf[0] = 0xEF;
@@ -779,18 +923,29 @@ void quisk_hermes_tx_send(int tx_socket, int * tx_records)
 	sendbuf[9] = 0x7F;
 	sendbuf[10] = 0x7F;
 	offset = C0_index * 4;		// offset into quisk_pc_to_hermes is C0[7:1] * 4
-	if (quisk_is_key_down())
-		key_down = 1;
-	else
-		key_down = 0;
-	sendbuf[11] = C0_index << 1 | key_down;			// C0
+	sendbuf[11] = C0_index << 1 | mox_bit;			// C0
 	sendbuf[12] = quisk_pc_to_hermes[offset++];		// C1
 	sendbuf[13] = quisk_pc_to_hermes[offset++];		// C2
 	sendbuf[14] = quisk_pc_to_hermes[offset++];		// C3
 	sendbuf[15] = quisk_pc_to_hermes[offset++];		// C4
-	if (C0_index == 0)	// Do not change receiver count without stopping Hermes and restarting
+	if (C0_index == 0) {	// Do not change receiver count without stopping Hermes and restarting
 		sendbuf[15] = quisk_multirx_count << 3 | 0x04;	// Send the old count, not the changed count
-	if (++C0_index > 11)
+		if (mox_bit)		// send filter selection on J16
+			sendbuf[13] = hermes_filter_tx << 1;
+		else
+			sendbuf[13] = hermes_filter_rx << 1;
+	}
+        else if ( ! quisk_is_vna && C0_index == 9) {
+		if (mox_bit) {		// send Alex filter selection
+			sendbuf[14] = alex_hpf_tx;
+			sendbuf[15] = alex_lpf_tx;
+                }
+		else {
+			sendbuf[14] = alex_hpf_rx;
+			sendbuf[15] = alex_lpf_rx;
+                }
+        }
+	if (++C0_index > 16)
 		C0_index = 0;
 	pt_buf = sendbuf + 16;
 	for (i = 0; i < 63; i++) {		// add 63 samples
@@ -816,7 +971,7 @@ void quisk_hermes_tx_send(int tx_socket, int * tx_records)
 
 		// Only send periodic hermeslite writes in second part of frame
 		hlwp = 5*(quisk_hermeslite_writepointer-1);
-		sendbuf[523] = quisk_hermeslite_writequeue[hlwp++] << 1 | key_down;
+		sendbuf[523] = quisk_hermeslite_writequeue[hlwp++] << 1 | mox_bit;
 		sendbuf[524] = quisk_hermeslite_writequeue[hlwp++];
 		sendbuf[525] = quisk_hermeslite_writequeue[hlwp++];
 		sendbuf[526] = quisk_hermeslite_writequeue[hlwp++];
@@ -829,14 +984,29 @@ void quisk_hermes_tx_send(int tx_socket, int * tx_records)
 		}
 	} else {
 		offset = C0_index * 4;		// offset into quisk_pc_to_hermes is C0[7:1] * 4
-		sendbuf[523] = C0_index << 1 | key_down;		// C0
+		sendbuf[523] = C0_index << 1 | mox_bit;		// C0
 		sendbuf[524] = quisk_pc_to_hermes[offset++];		// C1
 		sendbuf[525] = quisk_pc_to_hermes[offset++];		// C2
 		sendbuf[526] = quisk_pc_to_hermes[offset++];		// C3
 		sendbuf[527] = quisk_pc_to_hermes[offset++];		// C4
-		if (C0_index == 0)
+		if (C0_index == 0) {
 			sendbuf[527] = quisk_multirx_count << 3 | 0x04;		// Send the old count, not the changed count
-		if (++C0_index > 11)
+			if (mox_bit)		// send filter selection on J16
+				sendbuf[525] = hermes_filter_tx << 1;
+			else
+				sendbuf[525] = hermes_filter_rx << 1;
+		}
+                else if ( ! quisk_is_vna && C0_index == 9) {
+		        if (mox_bit) {		// send Alex filter selection
+			        sendbuf[526] = alex_hpf_tx;
+			        sendbuf[527] = alex_lpf_tx;
+                        }
+		        else {
+			        sendbuf[526] = alex_hpf_rx;
+			        sendbuf[527] = alex_lpf_rx;
+                        }
+                }
+		if (++C0_index > 16)
 			C0_index = 0;
 	
 		if (quisk_hermeslite_writepointer > 0) quisk_hermeslite_writeattempts++;
@@ -868,6 +1038,7 @@ void quisk_hermes_tx_send(int tx_socket, int * tx_records)
 	sent = send(tx_socket, (char *)sendbuf, 1032, 0);
 	if (sent != 1032)
 		quisk_udp_mic_error("Tx UDP socket error in Hermes");
+	//printf("hermes_tx_send end: hermes_num_samples %d\n", hermes_num_samples);
 }
 
 // udp_iq has an initial zero followed by the I/Q samples.
@@ -908,10 +1079,28 @@ static void transmit_udp(complex double * cSamples, int count)
 
 static void transmit_mic_carrier(complex double * cSamples, int count, double level)
 {	// send a CW carrier instead of mic samples
+#if 1
+	// transmit a carrier equal to the number of samples
 	int i;
-
-	for (i = 0; i < count; i++)		// transmit a carrier equal to the number of samples
+	for (i = 0; i < count; i++)
 		cSamples[i] = level * CLIP16;
+#else
+	// replace mic samples with a sin wave
+	int i;
+	double freq;
+	complex double phase1;		// Phase increment
+	static complex double vector1 = CLIP16 / 2;
+
+	// Use the sidetone slider 0 to 1000 to set frequency
+	freq = quisk_sidetoneCtrl * 5;
+	freq = ((int)freq / 50) * 50;
+	phase1 = cexp(I * 2.0 * M_PI * freq / 48000.0);
+	//phase1 = conj(phase1);
+	for (i = 0; i < count; i++) {
+		vector1 *= phase1;
+		cSamples[i] = vector1 * level;
+	}
+#endif
 }
 
 static void transmit_mic_imd(complex double * cSamples, int count, double level)
@@ -939,13 +1128,15 @@ static void transmit_mic_imd(complex double * cSamples, int count, double level)
 int quisk_process_microphone(int mic_sample_rate, complex double * cSamples, int count)
 {
 	int i, sample, maximum, interp, mic_interp, key_down;
-	double d, ctcss_delta;
+	double d, ctcss_delta, audio_scale, ctcss_scale;
+	static int key_was_down=0, key_down_counter=0;
 	static struct quisk_cFilter filtInterp={NULL};
+	static struct quisk_cFilter filtInterp2={NULL};
+	static struct quisk_cFilter filt240D4 = {NULL};
+	static struct quisk_cFilter filt300D6 = {NULL};
+	static struct quisk_cHB45Filter HalfBand = {NULL, 0, 0};
 	static double ctcss_angle=0;
-
-// Microphone sample are input at mic_sample_rate.  But after processing,
-// the output rate is MIC_OUT_RATE.
-	interp = MIC_OUT_RATE / mic_sample_rate;
+	static struct alc tx_alc = {NULL};
 
 #if 0
 	// Measure soundcard actual sample rate
@@ -967,15 +1158,23 @@ int quisk_process_microphone(int mic_sample_rate, complex double * cSamples, int
 	}
 #endif
 
-#if DEBUG_IO
+#if DEBUG_IO || DEBUG
 	//QuiskPrintTime("", -1);
 #endif
 
-#if DEBUG_IO
+#if DEBUG_IO || DEBUG
+	double magn;
+	static double out_max=0;
+#endif
+#if DEBUG_LEVEL || DEBUG_IO || DEBUG
 	debug_timer += count;
 	if (debug_timer >= mic_sample_rate)		// one second
 		debug_timer = 0;
 #endif
+
+// Microphone sample are input at mic_sample_rate.  But after processing,
+// the output rate is MIC_OUT_RATE.
+	interp = MIC_OUT_RATE / mic_sample_rate;
 	
 #if USE_GET_SIN
 	get_sin(cSamples, count);	// Replace mic samples with a sin wave
@@ -983,14 +1182,16 @@ int quisk_process_microphone(int mic_sample_rate, complex double * cSamples, int
 #if USE_2TONE
 	get_2tone(cSamples, count);	// Replace mic samples with a 2-tone test signal
 #endif
+	// measure maximum microphone level
 	maximum = 1;
-	for (i = 0; i < count; i++) {	// measure maximum microphone level for display
+	for (i = 0; i < count; i++) {
 		cSamples[i] *= (double)CLIP16 / CLIP32;	// convert 32-bit samples to 16 bits
 		d = creal(cSamples[i]);
 		sample = (int)fabs(d);
 		if (sample > maximum)
 			maximum = sample;
 	}
+	// VOX processing
 	if (maximum > vox_level) {
 		is_vox = mic_sample_rate / 1000 * timeVOX;		// reset timer to maximum
 	}
@@ -999,6 +1200,7 @@ int quisk_process_microphone(int mic_sample_rate, complex double * cSamples, int
 		if (is_vox < 0)
 			is_vox = 0;
 	}
+	// mic display level
 	if (maximum > mic_level)
 		mic_level = maximum;
 	mic_timer -= count;		// time out the max microphone level to display
@@ -1008,9 +1210,12 @@ int quisk_process_microphone(int mic_sample_rate, complex double * cSamples, int
 		mic_level = 1;
 	}
 
+	if ( ! tx_alc.buffer)
+		init_alc(&tx_alc, 960);	// at 48000 sps, 960 is 20 msec
+
 	// quiskTxHoldState is a state machine to implement a pause for a repeater frequency shift for FM
 	key_down = quisk_is_key_down();
-	if (rxMode == 5 || rxMode == 13) {
+	if (rxMode == FM || rxMode == DGT_FM) {
 		switch (quiskTxHoldState) {
 		case 0:			// Never implement any hold
 			break;
@@ -1033,7 +1238,12 @@ int quisk_process_microphone(int mic_sample_rate, complex double * cSamples, int
 		for (i = 0; i < count; i++)
 			cSamples[i] = 0;
 	}
-	if (key_down) {		// create transmit I/Q samples
+	if (key_down != key_was_down) {	
+		key_down_counter = 4800;	// Key was pressed. Zero the first few samples to clear the buffers.
+		init_alc(&tx_alc, 0);		// init ALC for Tx and RECORD_MIC
+		key_was_down = key_down;
+	}
+	if (key_down || DEBUG_MIC) {		// create transmit I/Q samples
 #if USE_GET_SIN == 2
 		transmit_udp(cSamples, count * interp);
 #else
@@ -1042,78 +1252,148 @@ int quisk_process_microphone(int mic_sample_rate, complex double * cSamples, int
 			transmit_mic_carrier(cSamples, count, quiskSpotLevel / 1000.0);
 		}
 		else switch (rxMode) {
-		case 2:		// LSB
-		case 3:		// USB
+		case LSB:		// LSB
+		case USB:		// USB
 			if (quisk_record_state == PLAYBACK)
-				count = tx_filter_digital(cSamples, count, 0.9);	// filter samples, minimal processing
+				count = tx_filter_digital(cSamples, count);	// filter samples, minimal processing
 			else
 				count = tx_filter(cSamples, count);		// filter samples
+			process_alc(cSamples, count, &tx_alc, rxMode);
 			break;
-		case 4:		// AM
+		case AM:		// AM
 			if (quisk_record_state != PLAYBACK)		// no audio processing for recorded sound
 				count = tx_filter(cSamples, count);
 			for (i = 0; i < count; i++)	// transmit (0.5 + ampl/2, 0)
 				cSamples[i] = (creal(cSamples[i]) + CLIP16) * 0.5;
+			process_alc(cSamples, count, &tx_alc, rxMode);
 			break;
-		case 5:		// FM
+		case FM:		// FM
 			if (quisk_record_state != PLAYBACK)		// no audio processing for recorded sound
 				count = tx_filter(cSamples, count);
-			if (quisk_ctcss_freq) {
+			if (quisk_ctcss_freq > 9) {
 				ctcss_delta = 2.0 * M_PI / MIC_OUT_RATE * quisk_ctcss_freq;
+				ctcss_scale = 450.0 * modulation_index / quisk_ctcss_freq;	// for 15% of total deviation
+				audio_scale = 0.85 * modulation_index / CLIP16;
 				for (i = 0; i < count; i++) {
-					cSamples[i] = 0.85 * cSamples[i] + 0.15 * CLIP16 * sin (ctcss_angle);
 					ctcss_angle += ctcss_delta;
 					if (ctcss_angle >= 2.0 * M_PI)
 						ctcss_angle -= 2.0 * M_PI;
+					cSamples[i] = CLIP16 * cexp(I * (audio_scale * creal(cSamples[i]) + ctcss_scale * sin (ctcss_angle)));
 				}
 			}
-			for (i = 0; i < count; i++) {	// this is phase modulation == FM and 6 dB /octave preemphasis
-				cSamples[i] = CLIP16 * cexp(I * creal(cSamples[i]) / CLIP16 * modulation_index);
+			else {
+				audio_scale = modulation_index / CLIP16;
+				for (i = 0; i < count; i++)	// this is phase modulation == FM and 6 dB /octave preemphasis
+					cSamples[i] = CLIP16 * cexp(I * audio_scale * creal(cSamples[i]));
 			}
+			process_alc(cSamples, count, &tx_alc, rxMode);
 			break;
-		case 7:		// external digital modes
-		case 8:
-		case 9:
-		case 13:
-			count = tx_filter_digital(cSamples, count, 1.0);	// filter samples, minimal processing
+		case DGT_U:		// external digital modes
+		case DGT_L:
+		case DGT_IQ:
+		case DGT_FM:
+			count = tx_filter_digital(cSamples, count);	// filter samples, minimal processing
+			process_alc(cSamples, count, &tx_alc, rxMode);
 			break;
-		case 10:	// transmit IMD 2-tone test
+		case IMD:	// transmit IMD 2-tone test
 			count *= interp;
 			transmit_mic_imd(cSamples, count, quiskImdLevel / 1000.0);
 			break;
-		case 11:	// FDV
-		case 12:
+		case FDV_U:	// FDV
+		case FDV_L:
 			count = tx_filter_freedv(cSamples, count, 1);
+			process_alc(cSamples, count, &tx_alc, rxMode);
 			break;
+		default:
+			break;
+		}
+#if DEBUG_IO || DEBUG
+		for (i = 0; i < count; i++) {
+			magn = cabs(cSamples[i]);
+			if (out_max < magn)
+				out_max = magn;
+		}
+		if (debug_timer == 0) {
+			printf("Max cSamples[] Output Level %9.6f\n", out_max / CLIP16);
+			out_max = 0;
+		}
+#endif
+		if (key_down_counter > 0) {		// zero the first few samples to clear the buffers.
+			for (i = 0; i < count && key_down_counter > 0; i++, key_down_counter--) {
+				if (key_down_counter < 480)
+					cSamples[i] *= (1.0 - key_down_counter / 480.0);	// slow increase at end
+				else
+					cSamples[i] = 0;	// initial samples are zero
+			}
 		}
 #endif
 	}
-	if (quisk_use_rx_udp == 10) {	// Send Hermes mic samples when key is up or down
+	if (reverse_tx_sideband)
+		for (i = 0; i < count; i++)
+			cSamples[i] = conj(cSamples[i]);
+        if(quisk_pt_sample_write) {	// Used for SoapySDR
+		// Interpolate the mic samples to the Tx sample rate
+//printf("Tx sample rate %i\n", tx_sample_rate);
+		switch (tx_sample_rate) {
+		case 100000:
+			count = quisk_cInterp2HB45(cSamples, count, &HalfBand);
+			// Fall through
+		case  50000:
+			if (! filt240D4.dCoefs)
+				quisk_filt_cInit(&filt240D4, quiskFilt240D4Coefs, sizeof(quiskFilt240D4Coefs)/sizeof(double));
+			if (! filt300D6.dCoefs)
+				quisk_filt_cInit(&filt300D6, quiskFilt300D6Coefs, sizeof(quiskFilt300D6Coefs)/sizeof(double));
+			count = quisk_cInterpDecim(cSamples, count, &filt240D4, 5, 4);	// 60 kSps
+			count = quisk_cInterpDecim(cSamples, count, &filt300D6, 5, 6);	// 50 kSps
+			break;
+		case 96000:
+			if (! filtInterp2.dCoefs)
+				quisk_filt_cInit(&filtInterp2, quiskFilt48dec24Coefs, sizeof(quiskFilt48dec24Coefs)/sizeof(double));
+			count = quisk_cInterpolate(cSamples, count, &filtInterp2, 2);
+			break;
+		case 192000:
+			if (! filtInterp2.dCoefs)
+				quisk_filt_cInit(&filtInterp2, quiskFilt48dec24Coefs, sizeof(quiskFilt48dec24Coefs)/sizeof(double));
+			count = quisk_cInterp2HB45(cSamples, count, &HalfBand);
+			count = quisk_cInterpolate(cSamples, count, &filtInterp2, 2);
+			break;
+		default:	// 48000
+			break;
+		}
+		(*quisk_pt_sample_write)(cSamples, count);
+	}
+	else if (quisk_use_rx_udp == 10) {	// Send Hermes mic samples when key is up or down
 		if ( ! quisk_rx_udp_started)
 			;
-		else if (key_down)
-			quisk_hermes_tx_add(cSamples, count);
-		else
-			quisk_hermes_tx_add(NULL, count);
+		else {
+			if ((rxMode == CWL || rxMode == CWU) && quiskSpotLevel < 0)	// CW and no Spot
+				for (i = 0; i < count; i++)
+					cSamples[i] = 0;
+			quisk_hermes_tx_add(cSamples, count, key_down);
+		}
 	}
 	else if (quisk_use_rx_udp && key_down) {	// Send mic samples to UDP when key is down
 		transmit_udp(cSamples, count);
 	}
 	if (quisk_record_state == RECORD_MIC) {
 		switch (rxMode) {
-		case 2:		// LSB
-		case 3:		// USB
+		case LSB:		// LSB
+		case USB:		// USB
 			count = tx_filter(cSamples, count);	// filter samples
+			process_alc(cSamples, count, &tx_alc, rxMode);
 			break;
-		case 4:		// AM
+		case AM:		// AM
 			count = tx_filter(cSamples, count);
+			process_alc(cSamples, count, &tx_alc, rxMode);
 			break;
-		case 5:		// FM
+		case FM:		// FM
 			count = tx_filter(cSamples, count);
+			process_alc(cSamples, count, &tx_alc, rxMode);
 			break;
-		case 11:	// FDV
-		case 12:
+		case FDV_U:	// FDV
+		case FDV_L:
 			count = tx_filter_freedv(cSamples, count, 0);
+			process_alc(cSamples, count, &tx_alc, rxMode);
 			break;
 		default:
 			for (i = 0; i < count; i++)
@@ -1129,11 +1409,8 @@ int quisk_process_microphone(int mic_sample_rate, complex double * cSamples, int
 		}
 		quisk_tmp_record(cSamples, count, (double)CLIP32 / CLIP16);	// convert 16 to 32 bits
 	}
-	else if (DEBUG_MIC) {
-		count = tx_filter(cSamples, count);
-	}
 
-#if DEBUG_IO
+#if DEBUG_IO || DEBUG
 	//QuiskPrintTime("    process_mic", 1);
 #endif
 	return count;
@@ -1141,11 +1418,12 @@ int quisk_process_microphone(int mic_sample_rate, complex double * cSamples, int
 
 PyObject * quisk_set_tx_audio(PyObject * self, PyObject * args, PyObject * keywds)
 {  /* Call with keyword arguments ONLY; change Tx audio parameters */
-	static char * kwlist[] = {"vox_level", "vox_time", "mic_clip", "mic_preemphasis", NULL} ;
+	static char * kwlist[] = {"vox_level", "vox_time", "mic_clip", "mic_preemphasis", "tx_sample_rate",
+		"reverse_tx_sideband", NULL} ;
 	int vlevel = -9999, clevel = -9999;
 
-	if (!PyArg_ParseTupleAndKeywords (args, keywds, "|iiid", kwlist,
-			&vlevel, &timeVOX, &clevel, &quisk_mic_preemphasis))
+	if (!PyArg_ParseTupleAndKeywords (args, keywds, "|iiidii", kwlist,
+			&vlevel, &timeVOX, &clevel, &quisk_mic_preemphasis, &tx_sample_rate, &reverse_tx_sideband))
 		return NULL;
 	if (vlevel != -9999)
 		vox_level = (int)(pow(10.0, vlevel / 20.0) * CLIP16);	// Convert dB to 16-bit sample
@@ -1186,6 +1464,30 @@ PyObject * quisk_is_vox(PyObject * self, PyObject * args)
 	return PyInt_FromLong(is_vox);
 }
 
+PyObject * quisk_set_hermes_filter(PyObject * self, PyObject * args)
+{
+	if (!PyArg_ParseTuple (args, "ii", &hermes_filter_rx, &hermes_filter_tx))
+		return NULL;
+	Py_INCREF (Py_None);
+	return Py_None;
+}
+
+PyObject * quisk_set_alex_hpf(PyObject * self, PyObject * args)
+{
+	if (!PyArg_ParseTuple (args, "ii", &alex_hpf_rx, &alex_hpf_tx))
+		return NULL;
+	Py_INCREF (Py_None);
+	return Py_None;
+}
+
+PyObject * quisk_set_alex_lpf(PyObject * self, PyObject * args)
+{
+	if (!PyArg_ParseTuple (args, "ii", &alex_lpf_rx, &alex_lpf_tx))
+		return NULL;
+	Py_INCREF (Py_None);
+	return Py_None;
+}
+
 void quisk_close_mic(void)
 {
 	if (mic_socket != INVALID_SOCKET) {
@@ -1202,7 +1504,7 @@ void quisk_open_mic(void)
 {
 	struct sockaddr_in Addr;
 	int sndsize = 48000;
-#if DEBUG_IO
+#if DEBUG_IO || DEBUG
 	int intbuf;
 #ifdef MS_WINDOWS
 	int bufsize = sizeof(int);
@@ -1245,7 +1547,7 @@ void quisk_open_mic(void)
 				mic_socket = INVALID_SOCKET;
 			}
 			else {
-#if DEBUG_IO
+#if DEBUG_IO || DEBUG
 				if (getsockopt(mic_socket, SOL_SOCKET, SO_SNDBUF, (char *)&intbuf, &bufsize) == 0)
 					printf("UDP mic socket send buffer size %d\n", intbuf);
 				else
@@ -1259,7 +1561,7 @@ void quisk_open_mic(void)
 void quisk_set_tx_mode(void)	// called when the mode rxMode is changed
 {
 	tx_filter(NULL, 0);
-	tx_filter_digital(NULL, 0, 0.0);
-	tx_filter_freedv(NULL, 0, 0);
+	tx_filter_digital(NULL, 0);
 	transmit_udp(NULL, 0);
+	tx_filter_freedv(NULL, 0, 0);
 }

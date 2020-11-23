@@ -48,32 +48,60 @@ a pre-built library.  If you need to compile codec2 from source, first change to
   svn co https://svn.code.sf.net/p/freetel/code/codec2-dev codec2-dev
 
 Note that we are using codec2-dev to get the most recent source.  Then build codec2 using the directions
-found in README.cmake.  The directions given below are current as of August 2015, but check for changes.
-Then copy the codec2 library to the freedvpkg directory under Quisk.  Nothing else is required.
+found in README.  The directions given below are current as of May 2018, but check for changes.
+Then copy the codec2 library to the freedvpkg directory under Quisk.
+
+If the new codec2 contains new modes, add them to freedv_modes in your config file.
+
+The Speex "-dev" packages are not needed by codec2, but are required for the Unit Test modules.
 
 Build a New codec2 on Linux
 ===========================
-The Speex "-dev" packages are not needed by codec2, but are required for the Unit Test modules.
+Create the codec2 shared library.  This assumes a 64-bit linux. Change the directory
+name from build_linux64 to build_linux32 for 32-bit linux.  Note the "../".
+
+  cd codec2-dev
+  mkdir build_linux64
+  cd build_linux64
+  cmake -DCMAKE_BUILD_TYPE=Release ../
+  make
+  cd src
+  cp libcodec2.so my-quisk-directory/freedvpkg
+
+Build a New 32-bit codec2 on 64-bit Linux
+=========================================
+Make sure package libc6-dev-i386 is installed.
 Create the codec2 shared library.  Note the "../".
 
   cd codec2-dev
-  mkdir build_linux
-  cd build_linux
-  cmake -DCMAKE_BUILD_TYPE=Release -DUNITTEST=OFF  ../
-  make codec2
+  mkdir build_linux32
+  cd build_linux32
+  export CFLAGS=-m32
+  cmake -DCMAKE_BUILD_TYPE=Release ../
+  make
   cd src
-  cp libcodec2*  my-quisk-directory/freedvpkg
+  cp libcodec2.so my-quisk-directory/freedvpkg
 
 Build a New codec2 on Windows
 =============================
-For Windows you need to install MinGW, MSYS, and g++.  Use the MSYS bash shell.  The Speex libraries
+For Windows you need to install MinGW-w64, MSYS2, and g++.  Use the MSYS2 shell.  The Speex libraries
 are not needed by codec2, but are required for the Unit Test modules.  To build the Unit Test modules,
 you need to install Speex and add -DSPEEXDSP_INCLUDE_DIR=../speex/include/speex -DSPEEXDSP_LIBRARY=../speex/bin.
 
+  # Use msys2 32-bit shell:
   cd codec2-dev
   mkdir build_win32
   cd build_win32
   cmake -G "MSYS Makefiles" -DCMAKE_BUILD_TYPE=Release -DUNITTEST=OFF  ../
+  make codec2
+  cd src
+  cp libcodec2.dll  my-quisk-directory/freedvpkg
+
+  # Use msys2 64-bit shell:
+  cd codec2-dev
+  mkdir build_win64
+  cd build_win64
+  cmake -G "MSYS Makefiles" -DCMAKE_BUILD_TYPE=Release -DUNITTEST=OFF -DCMAKE_SYSTEM_PROCESSOR=x86_64 ../
   make codec2
   cd src
   cp libcodec2.dll  my-quisk-directory/freedvpkg

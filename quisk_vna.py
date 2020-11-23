@@ -1,6 +1,6 @@
 #! /usr/bin/python
 
-# All QUISK software is Copyright (C) 2006-2016 by James C. Ahlstrom.
+# All QUISK software is Copyright (C) 2006-2018 by James C. Ahlstrom.
 # This free software is licensed for use under the GNU General Public
 # License (GPL), see http://www.opensource.org.
 # Note that there is NO WARRANTY AT ALL.  USE AT YOUR OWN RISK!!
@@ -12,17 +12,18 @@ This can also be installed as a package and run as quisk_vna.main().
 """
 
 from __future__ import print_function
+from __future__ import absolute_import
+from __future__ import division
 
 import sys, os
-os.chdir(os.path.normpath(os.path.dirname(__file__)))
-if sys.path[0] != "'.'":		# Make sure the current working directory is on path
-  sys.path.insert(0, '.')
+os.chdir(os.path.normpath(os.path.dirname(__file__)))	# change directory to the location of this script
+if sys.path[0] != '':		# Make sure the current working directory is on path
+  sys.path.insert(0, '')
 
-import wx, wx.html, wx.lib.buttons, wx.lib.stattext, wx.lib.colourdb
+import wx, wx.html, wx.lib.stattext, wx.lib.colourdb
 import math, cmath, time, traceback, string, pickle
 import threading, webbrowser
 import _quisk as QS
-from types import *
 from quisk_widgets import *
 import configure
 
@@ -49,12 +50,15 @@ if sys.platform == 'win32':
   else:
     config_dir = os.path.join(path, "My Documents")
   try:
-    import _winreg
-    key = _winreg.OpenKey(_winreg.HKEY_CURRENT_USER,
+    try:
+      import winreg as Qwinreg
+    except ImportError:
+      import _winreg as Qwinreg
+    key = Qwinreg.OpenKey(Qwinreg.HKEY_CURRENT_USER,
        r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders")
-    val = _winreg.QueryValueEx(key, "Personal")
-    val = _winreg.ExpandEnvironmentStrings(val[0])
-    _winreg.CloseKey(key)
+    val = Qwinreg.QueryValueEx(key, "Personal")
+    val = Qwinreg.ExpandEnvironmentStrings(val[0])
+    Qwinreg.CloseKey(key)
     if os.path.isdir(val):
       DefaultConfigDir = val
     else:
@@ -135,7 +139,7 @@ class GraphDisplay(wx.Window):
     self.Bind(wx.EVT_LEFT_UP, parent.OnLeftUp)
     self.Bind(wx.EVT_MOTION, parent.OnMotion)
     self.Bind(wx.EVT_MOUSEWHEEL, parent.OnWheel)
-    self.tune_tx = graph_width / 2	# Current X position of the Tx tuning line
+    self.tune_tx = graph_width // 2	# Current X position of the Tx tuning line
     self.height = 10
     self.y_min = 1000
     self.y_max = 0
@@ -148,7 +152,7 @@ class GraphDisplay(wx.Window):
     self.backgroundPen = wx.Pen(self.GetBackgroundColour(), 1)
     self.horizPen = wx.Pen(conf.color_gl, 1, wx.SOLID)
     self.font = wx.Font(24, wx.FONTFAMILY_SWISS, wx.NORMAL,
-          wx.FONTWEIGHT_NORMAL, face=conf.quisk_typeface)
+          wx.FONTWEIGHT_NORMAL, False, conf.quisk_typeface)
     if sys.platform == 'win32':
       self.Bind(wx.EVT_ENTER_WINDOW, self.OnEnter)
   def OnEnter(self, event):
@@ -241,9 +245,9 @@ class GraphScreen(wx.Window):
     self.started = False
     self.doResize = False
     self.pen_tick = wx.Pen("Black", 1, wx.SOLID)
-    self.font = wx.Font(10, wx.FONTFAMILY_SWISS, wx.NORMAL, wx.FONTWEIGHT_NORMAL, face=conf.quisk_typeface)
+    self.font = wx.Font(10, wx.FONTFAMILY_SWISS, wx.NORMAL, wx.FONTWEIGHT_NORMAL, False, conf.quisk_typeface)
     self.SetFont(self.font)
-    w = self.GetCharWidth() * 14 / 10
+    w = self.GetCharWidth() * 14 // 10
     h = self.GetCharHeight()
     self.freq_start = 1000000
     self.freq_stop  = 2000000
@@ -255,12 +259,12 @@ class GraphScreen(wx.Window):
     self.data_impedance = []
     self.data_reflect = []
     self.data_freq = [0] * data_width
-    self.tick = max(2, h * 3 / 10)
+    self.tick = max(2, h * 3 // 10)
     self.originX = w * 5
     self.offsetY = h + self.tick
     self.width = self.originX * 2 + self.graph_width + self.tick
-    self.height = application.screen_height * 3 / 10
-    self.x0 = self.originX + self.graph_width / 2		# center of graph
+    self.height = application.screen_height * 3 // 10
+    self.x0 = self.originX + self.graph_width // 2		# center of graph
     self.originY = 10
     self.num_ticks = 8	# number of Y lines above the X axis
     self.dy_ticks = 10
@@ -313,19 +317,19 @@ class GraphScreen(wx.Window):
     self.Refresh()
   def MakeYScale(self):
     chary = self.chary
-    dy = self.dy_ticks = (self.originY - chary * 2) / self.num_ticks   # pixels per tick
+    dy = self.dy_ticks = (self.originY - chary * 2) // self.num_ticks   # pixels per tick
     ytot = dy * self.num_ticks
     # Voltage dB scale
     dbs = 80	# Number of dB to display
     self.leftZero = self.originY - ytot - chary
-    self.leftSlope = - ytot * 360 / dbs		# pixels per dB times 360
+    self.leftSlope = - ytot * 360 // dbs		# pixels per dB times 360
     # Phase scale
     self.rightSlope = - ytot			# pixels per degree times 360
-    self.rightZero = self.originY - ytot / 2 - chary
+    self.rightZero = self.originY - ytot // 2 - chary
     # SWR scale
     swrs = 9		# display range 1.0 to swrs
-    self.swrSlope = - ytot * 360 / (swrs - 1)	# pixels per SWR unit times 360
-    self.swrZero = self.originY - self.swrSlope / 360 - chary
+    self.swrSlope = - ytot * 360 // (swrs - 1)	# pixels per SWR unit times 360
+    self.swrZero = self.originY - self.swrSlope // 360 - chary
   def MakeYTicks(self, dc):
     charx = self.charx
     chary = self.chary
@@ -342,32 +346,32 @@ class GraphScreen(wx.Window):
     dc.SetTextForeground(self.display.magnPen.GetColour())
     for i in range(self.num_ticks + 1):
       # Create the dB scale
-      val = (y - self.leftZero) * 360 / self.leftSlope
+      val = (y - self.leftZero) * 360 // self.leftSlope
       t = str(val)
       dc.DrawLine(x1, y, x2, y)
       self.display.y_ticks.append(y)
       w, h = dc.GetTextExtent(t)
-      dc.DrawText(t, x1 - w, y - h / 2)
+      dc.DrawText(t, x1 - w, y - h // 2)
       y += self.dy_ticks
     y = self.leftZero
     dc.SetTextForeground(self.display.phasePen.GetColour())
     for i in range(self.num_ticks + 1):
       # Create the scale on the right
-      val = (y - self.rightZero) * 360 / self.rightSlope
+      val = (y - self.rightZero) * 360 // self.rightSlope
       t = str(val)
       dc.DrawLine(x4, y, x5, y)
       w, h = dc.GetTextExtent(t)
-      dc.DrawText(t, self.width - w - charx, y - h / 2 + 3)	# right text
+      dc.DrawText(t, self.width - w - charx, y - h // 2 + 3)	# right text
       y += self.dy_ticks
     # Create the SWR scale
     if self.mode == 'Reflection':
       y = self.leftZero
       dc.SetTextForeground(self.display.swrPen.GetColour())
       for i in range(self.num_ticks + 1):
-        val = (y - self.swrZero) * 360 / self.swrSlope
+        val = (y - self.swrZero) * 360 // self.swrSlope
         t = str(val)
         w, h = dc.GetTextExtent(t)
-        dc.DrawText(t, w/2, y - h / 2)
+        dc.DrawText(t, w//2, y - h // 2)
         y += self.dy_ticks
   def MakeXTicks(self, dc):
     originY = self.originY
@@ -414,22 +418,22 @@ class GraphScreen(wx.Window):
     if mant < 0.3:	# label every 10
       tfreq = 10 ** expn
       ltick = tfreq
-      mtick = ltick / 2
-      stick = ltick / 10
+      mtick = ltick // 2
+      stick = ltick // 10
     elif mant < 0.69:	# label every 20
       tfreq = 2 * 10 ** expn
-      ltick = tfreq / 2
-      mtick = ltick / 2
-      stick = ltick / 10
+      ltick = tfreq // 2
+      mtick = ltick // 2
+      stick = ltick // 10
     else:		# label every 50
       tfreq = 5 * 10 ** expn
       ltick = tfreq
-      mtick = ltick / 5
-      stick = ltick / 10
+      mtick = ltick // 5
+      stick = ltick // 10
     # Draw the X axis ticks and frequency in kHz
     dc.SetPen(self.pen_tick)
-    freq1 = VFO - sample_rate / 2
-    freq1 = (freq1 / stick) * stick
+    freq1 = VFO - sample_rate // 2
+    freq1 = (freq1 // stick) * stick
     freq2 = freq1 + sample_rate + stick + 1
     y_end = 0
     for f in range (freq1, freq2, stick):
@@ -442,9 +446,9 @@ class GraphScreen(wx.Window):
         else:					# small tick
           dc.DrawLine(x, originY, x, originY + tick0)
         if f % tfreq is 0:		# place frequency label
-          t = str(f/1000)
+          t = str(f//1000)
           w, h = dc.GetTextExtent(t)
-          dc.DrawText(t, x - w / 2, originY + tick2)
+          dc.DrawText(t, x - w // 2, originY + tick2)
           y_end = originY + tick2 + h
     if y_end:		# mark the center of the display
       dc.DrawLine(self.x0, y_end, self.x0, application.screen_height)
@@ -480,7 +484,7 @@ class GraphScreen(wx.Window):
       for x in range(self.graph_width):
         self.data_impedance.append(50)
         self.data_reflect.append(0)
-        i = x * self.correct_width / self.data_width
+        i = x * self.correct_width // self.data_width
         magn = abs(volts[i])
         phase = cmath.phase(volts[i]) * 360. / (2.0 * math.pi)
         if magn < 1e-6:
@@ -607,10 +611,10 @@ class GraphScreen(wx.Window):
     application.ShowFreq(freq, index)
   def GetMousePosition(self, event):
     """For mouse clicks in our display, translate to our screen coordinates."""
-    mouse_x, mouse_y = event.GetPositionTuple()
+    mouse_x, mouse_y = event.GetPosition()
     win = event.GetEventObject()
     if win is not self:
-      x, y = win.GetPositionTuple()
+      x, y = win.GetPosition().Get()
       mouse_x += x
       mouse_y += y
     return mouse_x, mouse_y
@@ -626,7 +630,7 @@ class GraphScreen(wx.Window):
       mouse_x, mouse_y = self.GetMousePosition(event)
       self.SetTxFreq(index=mouse_x - self.originX)
   def OnWheel(self, event):
-    tune = self.display.tune_tx + event.GetWheelRotation() / event.GetWheelDelta()
+    tune = self.display.tune_tx + event.GetWheelRotation() // event.GetWheelDelta()
     self.SetTxFreq(index=tune)
 
 class HelpScreen(wx.html.HtmlWindow):
@@ -666,9 +670,9 @@ class Spacer(wx.Window):
     wx.Window.__init__(self, parent, pos = (0, 0),
        size=(-1, 6), style = wx.NO_BORDER)
     self.Bind(wx.EVT_PAINT, self.OnPaint)
-    r, g, b = parent.GetBackgroundColour().Get()
-    dark = (r * 7 / 10, g * 7 / 10, b * 7 / 10)
-    light = (r + (255 - r) * 5 / 10, g + (255 - g) * 5 / 10, b + (255 - b) * 5 / 10)
+    r, g, b = parent.GetBackgroundColour().Get(False)
+    dark = (r * 7 // 10, g * 7 // 10, b * 7 // 10)
+    light = (r + (255 - r) * 5 // 10, g + (255 - g) * 5 // 10, b + (255 - b) * 5 // 10)
     self.dark_pen = wx.Pen(dark, 1, wx.SOLID)
     self.light_pen = wx.Pen(light, 1, wx.SOLID)
     self.width = application.screen_width
@@ -690,8 +694,8 @@ class CalibrateDialog(wx.Dialog):
     self.correct_open = None
     self.correct_short = None
     self.correct_load = None
-    w, h = app.main_frame.GetSizeTuple()
-    width = w / 2
+    w, h = app.main_frame.GetSize().Get()
+    width = w // 2
     if app.screen_name == "Reflection":
       title = "Calibrate for Reflection Mode"
       t = ''
@@ -720,8 +724,8 @@ class CalibrateDialog(wx.Dialog):
     tab = self.GetCharHeight() * 2
     y = tab
     txt = wx.StaticText(self, -1, t, pos=(tab, y))
-    z, chary = txt.GetSizeTuple()
-    y += chary * 3 / 2
+    z, chary = txt.GetSize().Get()
+    y += chary * 3 // 2
     if app.screen_name == "Reflection":
       t = "To calibrate the VNA for reflection mode, connect the standard Short, Open and Load connectors to the unknown port, and press the button."
       t += "  Reflection mode requires at least an Open or Short calibration, but using all three is highly recommended."
@@ -731,44 +735,49 @@ class CalibrateDialog(wx.Dialog):
     t += "  The calibration will be saved for use the next time the program starts."
     txt = wx.StaticText(self, -1, t, pos=(tab, y))
     txt.Wrap(width - tab * 2)
-    w, h = txt.GetSizeTuple()
+    w, h = txt.GetSize().Get()
     y += h + chary
     # Calibrate buttons
     t1 = wx.StaticText(self, -1, "Connect the Short connector and press", pos=(tab, y))
-    tw, th = t1.GetSizeTuple()
-    bx = tab + tw + tab / 2
-    b1 = wx.lib.buttons.GenButton(self, -1, '  Short  ')
-    self.Bind(wx.EVT_BUTTON, self.OnBtnShort, b1)
-    bw, bh = b1.GetSizeTuple()
-    by = y + (th - bh) / 2
-    b1.MoveXY(bx, by)
-    self.txt_short = wx.StaticText(self, -1, "Not done", pos=(bx + bw + tab / 2, y))
-    y = by + bh * 15 / 10
-    by = y + (th - bh) / 2
+    tw, th = t1.GetSize().Get()
+    bx = tab + tw + tab // 2
+    b1 = QuiskPushbutton(self, self.OnBtnShort, "  Short  ")
+    b1.SetColorGray()
+    bw, bh = b1.GetSize().Get()
+    by = y + (th - bh) // 2
+    b1.Move(wx.Point(bx, by))
+    self.txt_short = wx.StaticText(self, -1, "Not done", pos=(bx + bw + tab // 2, y))
+    y = by + bh * 15 // 10
+    by = y + (th - bh) // 2
     t2 = wx.StaticText(self, -1, "Connect the Open connector and press", pos=(tab, y), size = (tw, th))
-    b2 = wx.lib.buttons.GenButton(self, -1, 'Open', pos = (bx, by), size = (bw, bh))
-    self.Bind(wx.EVT_BUTTON, self.OnBtnOpen, b2)
-    self.txt_open = wx.StaticText(self, -1, "Not done", pos=(bx + bw + tab / 2, y))
-    y = by + bh * 15 / 10
-    by = y + (th - bh) / 2
+    b2 = QuiskPushbutton(self, self.OnBtnOpen, "Open")
+    b2.SetColorGray()
+    b2.SetPosition((bx, by))
+    b2.SetSize((bw, bh))
+    self.txt_open = wx.StaticText(self, -1, "Not done", pos=(bx + bw + tab // 2, y))
+    y = by + bh * 15 // 10
+    by = y + (th - bh) // 2
     if app.screen_name == "Reflection":
       t3 = wx.StaticText(self, -1, "Connect the Load connector and press", pos=(tab, y), size = (tw, th))
-      b3 = wx.lib.buttons.GenButton(self, -1, 'Load', pos = (bx, by), size = (bw, bh))
-      self.Bind(wx.EVT_BUTTON, self.OnBtnLoad, b3)
-      self.txt_load = wx.StaticText(self, -1, "Not done", pos=(bx + bw + tab / 2, y))
-      y = by + bh * 15 / 10
+      b3 = QuiskPushbutton(self, self.OnBtnLoad, "Load")
+      b3.SetColorGray()
+      b3.SetPosition((bx, by))
+      b3.SetSize((bw, bh))
+      self.txt_load = wx.StaticText(self, -1, "Not done", pos=(bx + bw + tab // 2, y))
+      y = by + bh * 15 // 10
     # Calibrate buttons
-    b1 = wx.lib.buttons.GenButton(self, -1, '  Calibrate  ')
+    b1 = QuiskPushbutton(self, self.OnBtnCalibrate, "  Calibrate  ")
+    b1.SetColorGray()
     b1.Enable(False)
-    w, h = b1.GetSizeTuple()
-    b2 = wx.lib.buttons.GenButton(self, -1, 'Cancel', size=(w, h))
-    self.Bind(wx.EVT_BUTTON, self.OnBtnCalibrate, b1)
-    self.Bind(wx.EVT_BUTTON, self.OnBtnCancel, b2)
-    ww = (width - w * 2 - 40) / 3
-    b1.MoveXY(ww, y)
-    b2.MoveXY(width - w - ww, y)
-    y += h * 3 / 2
-    self.SetClientSizeWH(width, y)
+    w, h = b1.GetSize().Get()
+    b2 = QuiskPushbutton(self, self.OnBtnCancel, "Cancel")
+    b2.SetColorGray()
+    b2.SetSize((w, h))
+    ww = (width - w * 2 - 40) // 3
+    b1.Move(wx.Point(ww, y))
+    b2.Move(wx.Point(width - w - ww, y))
+    y += h * 3 // 2
+    self.SetClientSize(wx.Size(width, y))
     self.btns = [b1, b2]
     # timer for calibrate buttons
     self.calibrate_timer = wx.Timer(self)
@@ -864,7 +873,8 @@ class App(wx.App):
       exec(compile(open(ConfigPath).read(), ConfigPath, 'exec'), d)		# execute the user's config file
       if os.path.isfile(ConfigPath2):	# See if the user has a second config file
         exec(compile(open(ConfigPath2).read(), ConfigPath2, 'exec'), d)	# execute the user's second config file
-      for k, v in d.items():		# add user's config items to conf
+      for k in d:		# add user's config items to conf
+        v = d[k]
         if k[0] != '_':				# omit items starting with '_'
           setattr(conf, k, v)
     else:
@@ -894,6 +904,7 @@ class App(wx.App):
     self.transmission_cal = "Cal x"
     self.calibrate_time = time.asctime()
     self.calibrate_version = 1
+    QS.set_params(quisk_is_vna=1)	# Call this only if we are the VNA program
     # Open hardware file
     self.firmware_version = None
     global Hardware
@@ -955,10 +966,11 @@ class App(wx.App):
     # Restore persistent program state
     self.init_path = os.path.join(os.path.dirname(ConfigPath), '.quisk_vna_init.pkl')
     try:
-      fp = open(self.init_path, "rb")
+      fp = open(self.init_path, "r")
       d = pickle.load(fp)
       fp.close()
-      for k, v in d.items():
+      for k in d:
+        v = d[k]
         if k in self.StateNames:
           setattr(self, k, v)
     except:
@@ -968,6 +980,7 @@ class App(wx.App):
       h = self.main_frame.GetHandle()
     else:
       h = 0
+    QS.set_enable_bandscope(0)
     # FFT size must equal the data_width so that all data points are returned!
     QS.record_app(self, conf, self.data_width, self.data_width, self.data_width,
                  1, self.sample_rate, h)
@@ -975,7 +988,7 @@ class App(wx.App):
     self.graph = GraphScreen(frame, self.data_width, self.data_width, self.correct_width, self.correct_delta)
     self.screen = self.graph
     width = self.graph.width
-    self.help_screen = HelpScreen(frame, width, self.screen_height / 10)
+    self.help_screen = HelpScreen(frame, width, self.screen_height // 10)
     self.help_screen.Hide()
     # Make a vertical box to hold all the screens and the bottom rows
     vertBox = self.vertBox = wx.BoxSizer(wx.VERTICAL)
@@ -1004,10 +1017,10 @@ class App(wx.App):
       if width < w:
         width = w
     for i in range(24, 8, -2):
-      font = wx.Font(i, wx.FONTFAMILY_SWISS, wx.NORMAL, wx.FONTWEIGHT_NORMAL, face=conf.quisk_typeface)
+      font = wx.Font(i, wx.FONTFAMILY_SWISS, wx.NORMAL, wx.FONTWEIGHT_NORMAL, False, conf.quisk_typeface)
       frame.SetFont(font)
       w, h = frame.GetTextExtent('Start   ')
-      if h < height * 9 / 10:
+      if h < height * 9 // 10:
         break
     for b in buttons1:
       b.SetMinSize((width, height))
@@ -1015,7 +1028,7 @@ class App(wx.App):
     t = wx.lib.stattext.GenStaticText(frame, -1, 'Start  ')
     t.SetFont(font)
     t.SetBackgroundColour(conf.color_bg)
-    gap = max(2, height/8)
+    gap = max(2, height//8)
     freq0 = t
     e = wx.TextCtrl(frame, -1, '1', style=wx.TE_PROCESS_ENTER)
     e.SetFont(font)
@@ -1039,7 +1052,7 @@ class App(wx.App):
     # Band buttons
     ilst = []
     slst = []
-    for l in conf.BandEdge.keys():	# Sort keys
+    for l in conf.BandEdge:	# Sort keys
       if not (l in conf.bandLabels or l == '60'):
         continue
       try:
@@ -1061,8 +1074,8 @@ class App(wx.App):
     # make a list of all buttons
     self.buttons = buttons1 + band
     # Add button row to sizer
-    gap = max(2, height / 8)
-    gap2 = max(2, height / 4)
+    gap = max(2, height // 8)
+    gap2 = max(2, height // 4)
     szr1.Add(buttons1[0], 0, wx.RIGHT|wx.LEFT, gap)
     szr1.Add(buttons1[1], 0, wx.RIGHT, gap)
     szr1.Add(buttons1[2], 0, wx.RIGHT, gap)
@@ -1076,8 +1089,8 @@ class App(wx.App):
       szr1.Add(x, 1, wx.RIGHT, gap)
     self.statusbar = self.main_frame.CreateStatusBar()
     # Set top window size
-    self.main_frame.SetClientSizeWH(self.graph.width, self.screen_height * 5 / 10)
-    w, h = self.main_frame.GetSizeTuple()
+    self.main_frame.SetClientSize(wx.Size(self.graph.width, self.screen_height * 5 // 10))
+    w, h = self.main_frame.GetSize().Get()
     self.main_frame.SetSizeHints(w, 1, w)
     if hasattr(Hardware, 'pre_open'):       # pre_open() is called before open()
       Hardware.pre_open()
@@ -1124,13 +1137,14 @@ class App(wx.App):
   def OnExit(self):
     QS.close_rx_udp()
     ##self.local_conf.SaveState()	# to save default radio selection
+    return 0
   def SaveState(self):
     if self.init_path:		# save current program state
       d = {}
       for n in self.StateNames:
         d[n] = getattr(self, n)
       try:
-        fp = open(self.init_path, "wb")
+        fp = open(self.init_path, "w")
         pickle.dump(d, fp)
         fp.close()
       except:
@@ -1196,7 +1210,7 @@ class App(wx.App):
       for b in self.buttons1:
         b.Enable(True)
     self.graph.SetMode(self.screen_name)
-    if not self.OnNewFreq():
+    if not self.running and not self.OnNewFreq():
       return
     if self.has_SetVNA:
       if run:

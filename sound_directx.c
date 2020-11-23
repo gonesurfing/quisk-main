@@ -13,20 +13,88 @@
 
 HRESULT errFound, errOpen;
 
+extern HWND quisk_mainwin_handle;
+
 static GUID IEEE = {0x00000003, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
 static GUID PCMM = {0x00000001, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
 
+static PyObject * MakePyUnicode(LPCTSTR txt)
+{       // return a Python Unicode object
+        PyObject * py_unicode;
+
+#ifdef UNICODE
+	size_t wstr_size = wcslen(txt);
+	py_unicode = PyUnicode_DecodeUTF16((const char *)txt, wstr_size * sizeof(WCHAR), "replace", NULL);
+#else
+	int wstr_size = MultiByteToWideChar(CP_ACP, 0, txt, -1, NULL, 0);
+	LPWSTR wstr = (LPWSTR)malloc(sizeof(WCHAR) * (wstr_size + 1));
+	MultiByteToWideChar(CP_ACP, 0, txt, -1, wstr, wstr_size);
+	py_unicode = PyUnicode_DecodeUTF16((const char *)wstr, wstr_size * sizeof(WCHAR), "replace", NULL);
+	free(wstr);
+#endif
+        return py_unicode;
+}
+
+static int match_name(LPCTSTR lpszDesc, const char * name)
+{
+	int found;
+	PyObject * py_unicode;
+	PyObject * py_substring;
+	Py_ssize_t length, index;
+
+	py_unicode = MakePyUnicode(lpszDesc);
+	if ( ! py_unicode)
+		return 0;
+        py_substring = PyUnicode_DecodeUTF8(name, strlen(name), "replace"); 
+	if ( ! py_substring) {
+        	Py_DECREF(py_unicode);
+		return 0;
+	}
+#if PY_MAJOR_VERSION >= 3
+	if (PyUnicode_READY(py_unicode) == 0)
+		length = PyUnicode_GET_LENGTH(py_unicode);
+	else
+		length = 0;
+#else
+	length = PyUnicode_GET_SIZE(py_unicode);
+#endif
+	if (length <= 0) {
+        	Py_DECREF(py_unicode);
+        	Py_DECREF(py_substring);
+		return 0;
+	}
+	index = PyUnicode_Find(py_unicode, py_substring, 0, length, 1);
+	if (index >= 0)
+		found = 1;
+	else if (index == -1)
+		found = 0;
+	else {		// error
+		PyErr_Clear();
+		found = 0;
+	}
+        Py_DECREF(py_unicode);
+        Py_DECREF(py_substring);
+	return found;
+}
+
 static BOOL CALLBACK DSEnumNames(LPGUID lpGUID, LPCTSTR lpszDesc, LPCTSTR lpszDrvName, LPVOID pyseq)
 {
-	PyList_Append((PyObject *)pyseq, PyString_FromString(lpszDesc));
-	return( TRUE );
+        //char * buf = (char *)malloc(2000);
+        //strcpy (buf, "\xc9vir\xf6n");
+        //strcat(buf, (char *)lpszDesc);
+        //PyObject * py_string = py_str_utf8((LPCTSTR)buf);
+	PyObject * py_unicode = MakePyUnicode(lpszDesc);
+	PyList_Append((PyObject *)pyseq, py_unicode);
+        //free(buf);
+        Py_DECREF(py_unicode);
+	return TRUE;
 }
 
 static BOOL CALLBACK DsEnumPlay(LPGUID lpGUID, LPCTSTR lpszDesc, LPCTSTR lpszDrvName, LPVOID dev)
 {	// Open the play device if the name is found in the description
 	LPDIRECTSOUND8 DsDev;
 
-	if (strstr (lpszDesc, ((struct sound_dev *)dev)->name)) {
+	if (match_name(lpszDesc, ((struct sound_dev *)dev)->name)) {
 		errFound = DS_OK;
 		errOpen = DirectSoundCreate8(lpGUID, &DsDev, NULL);
 		if (errOpen == DS_OK) {
@@ -43,7 +111,11 @@ static BOOL CALLBACK DsEnumCapture(LPGUID lpGUID, LPCTSTR lpszDesc, LPCTSTR lpsz
 {	// Open the capture device if the name is found in the description
 	LPDIRECTSOUNDCAPTURE8 DsDev;
 
-	if (strstr (lpszDesc, ((struct sound_dev *)dev)->name)) {
+        //char * buf = (char *)malloc(2000);
+        //strcpy (buf, "\xc9vir\xf6n");
+        //strcat(buf, (char *)lpszDesc);
+        //PyObject * py_string = py_str_utf8((LPCTSTR)buf);
+	if (match_name(lpszDesc, ((struct sound_dev *)dev)->name)) {
 		errFound = DS_OK;
 		errOpen = DirectSoundCaptureCreate8(lpGUID, &DsDev, NULL);
 		if (errOpen == DS_OK)
@@ -132,10 +204,6 @@ static int quisk_open_capture(struct sound_dev * dev)
 		(LPDIRECTSOUNDCAPTURE8)dev->handle, &dscbd, &ptBuf, NULL);
 	if (hr == DS_OK) {
 		dev->buffer = ptBuf;
-#if DEBUG_IO
-		printf("Created capture buffer size %d bytes for %s\n",
-			dev->play_buf_size, dev->name);
-#endif
 	}
 	else {
 		snprintf (quisk_sound_state.err_msg, SC_SIZE,
@@ -152,6 +220,10 @@ static int quisk_open_capture(struct sound_dev * dev)
 			"DirectSound capture device %s capture start failed", dev->name);
 		return 1;
 	}
+#if DEBUG_IO
+	printf("Created capture buffer size %d bytes for device %s, descr %s\n",
+		dev->play_buf_size, dev->name, dev->stream_description);
+#endif
 	return 0;
 }
 
@@ -184,7 +256,7 @@ static int quisk_open_playback(struct sound_dev * dev)
 			"DirectSound play device %s open failed", dev->name);
 		return 1;
 	}
-	hr = IDirectSound_SetCooperativeLevel ((LPDIRECTSOUND8)dev->handle, (HWND)quisk_mainwin_handle, DSSCL_PRIORITY);
+	hr = IDirectSound_SetCooperativeLevel ((LPDIRECTSOUND8)dev->handle, quisk_mainwin_handle, DSSCL_PRIORITY);
 	if (hr != DS_OK) {
 		snprintf (quisk_sound_state.err_msg, SC_SIZE,
 			"DirectSound play device %s cooperative level failed", dev->name);
@@ -204,9 +276,13 @@ static int quisk_open_playback(struct sound_dev * dev)
 	}
 	else {
 		snprintf (quisk_sound_state.err_msg, SC_SIZE,
-			"DirectSound play device %s buffer create failed (0x%X)", dev->name, hr);
+			"DirectSound play device %s buffer create failed (0x%X)", dev->name, (unsigned int)hr);
 		return 1;
 	}
+#if DEBUG_IO
+	printf("Created play buffer size %d bytes for device %s, descr %s\n",
+		dev->play_buf_size, dev->name, dev->stream_description);
+#endif
 	return 0;
 }
 
@@ -273,7 +349,7 @@ void quisk_close_sound_alsa(struct sound_dev ** pCapture, struct sound_dev ** pP
 
 
 int  quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
-{
+{ // cSamples can be NULL to discard samples
 	LPDIRECTSOUNDCAPTUREBUFFER ptBuf = (LPDIRECTSOUNDCAPTUREBUFFER)dev->buffer;
 	HRESULT hr;
 	DWORD readPos, captPos;
@@ -282,7 +358,6 @@ int  quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
 	short si, sq, * pts;
 	float fi, fq, * ptf;
 	int   li, lq, * ptl;	// int must be 32 bits
-	complex double c;
 	int ii, qq, nSamples;
 	int bytes, frames, poll_size, millisecs, bytes_per_frame;
 	
@@ -347,7 +422,7 @@ int  quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
 		return 0;
 	}
 //printf ("%d %d %d %d\n", dev->channel_I, dev->channel_Q, bytes_per_frame, dev->num_channels);
-#if DEBUG_IO > 3
+#if DEBUG_IO
 	printf("%s read %4d bytes %4d frames from %9d to (%9lu %9lu) diff %9lu\n", dev->name,
 		bytes, frames, dev->dataPos, readPos, captPos, captPos - readPos);
 #endif
@@ -373,7 +448,11 @@ int  quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
 				dev->overrange++;
 			ii = si << 16;
 			qq = sq << 16;
-			cSamples[nSamples++] = ii + I * qq;
+			if (nSamples < SAMP_BUFFER_SIZE * 8 / 10) {
+				if (cSamples)
+					cSamples[nSamples] = ii + I * qq;
+				nSamples++;
+			}
 			bytes += bytes_per_frame;
 			frames--;
 			if (bytes == n1)
@@ -392,7 +471,11 @@ int  quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
 				dev->overrange++;	// assume overrange returns max int
 			if (lq >=  CLIP32 || lq <= -CLIP32)
 				dev->overrange++;
-			cSamples[nSamples++] = li + I * lq;
+			if (nSamples < SAMP_BUFFER_SIZE * 8 / 10) {
+				if (cSamples)
+					cSamples[nSamples] = li + I * lq;
+				nSamples++;
+			}
 			bytes += bytes_per_frame;
 			frames--;
 			if (bytes == n1)
@@ -409,7 +492,11 @@ int  quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
 			ptf += dev->num_channels;
 			if (fabsf(fi) >= 1.0 || fabsf(fq) >= 1.0)
 				dev->overrange++;	// assume overrange returns maximum
-			cSamples[nSamples++] = (fi + I * fq) * 16777215;
+			if (nSamples < SAMP_BUFFER_SIZE * 8 / 10) {
+				if (cSamples)
+					cSamples[nSamples] = (fi + I * fq) * 16777215;
+				nSamples++;
+			}
 			bytes += bytes_per_frame;
 			frames--;
 			if (bytes == n1) {
@@ -419,11 +506,6 @@ int  quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
 		break;
 	}
 	IDirectSoundCaptureBuffer8_Unlock(ptBuf, pt1, n1, pt2, n2);
-	for (i = 0; i < nSamples; i++) {	// DC removal; R.G. Lyons page 553
-		c = cSamples[i] + dev->dc_remove * 0.95;
-		cSamples[i] = c - dev->dc_remove;
-		dev->dc_remove = c;
-	}
 	return nSamples;
 }
 

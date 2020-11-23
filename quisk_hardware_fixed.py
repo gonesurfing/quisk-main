@@ -1,3 +1,4 @@
+from __future__ import absolute_import
 # Please do not change this hardware control module for Quisk.
 # This hardware module is for receivers with a fixed VFO, such as
 # the SoftRock.  Change your VFO frequency below.

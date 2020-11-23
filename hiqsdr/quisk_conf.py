@@ -2,6 +2,10 @@
 # improved version HiQSDR.  If you use the HiQSDR you should upgrade your firmware
 # to version 1.1.
 
+from __future__ import print_function
+from __future__ import absolute_import
+from __future__ import division
+
 from hiqsdr import quisk_hardware
 
 add_imd_button = 1

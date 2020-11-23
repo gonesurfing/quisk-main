@@ -2,8 +2,10 @@
 # It provides USB control of SoftRock hardware.
 
 from __future__ import print_function
+from __future__ import absolute_import
+from __future__ import division
 
-import struct, threading, time, traceback, math
+import sys, struct, threading, time, traceback, math
 from quisk_hardware_model import Hardware as BaseHardware
 import _quisk as QS
 
@@ -11,7 +13,24 @@ import _quisk as QS
 #   byte_array      = dev.ctrl_transfer (IN,  bmRequest, wValue, wIndex, length, timout)
 #   len(string_msg) = dev.ctrl_transfer (OUT, bmRequest, wValue, wIndex, string_msg, timout)
 
-import usb.core, usb.util
+try:
+  import usb.core, usb.util
+except:
+  if sys.platform == 'win32':
+    dlg = wx.MessageDialog(None, "The Python pyusb module is required but not installed. Do you want me to install it?",
+      "Install Python pyusb", style = wx.YES|wx.NO)
+    if dlg.ShowModal() == wx.ID_YES:
+      subprocess.call([sys.executable, "-m", "pip", "install", "pyusb"])
+      try:
+        import usb.core, usb.util
+      except:
+        dlg = wx.MessageDialog(None, "Installation of Python pyusb failed. Please install it by hand.",
+           "Installation failed", style=wx.OK)
+        dlg.ShowModal()
+  else:
+    dlg = wx.MessageDialog(None, "The Python pyusb module is required but not installed. Please install package python-usb.",
+      "Install Python pyusb", style = wx.OK)
+    dlg.ShowModal()
 
 DEBUG = 0
 
@@ -52,7 +71,6 @@ class Hardware(BaseHardware):
     if usb_dev is None:
       text = 'USB device not found VendorID 0x%X ProductID 0x%X' % (
           self.conf.usb_vendor_id, self.conf.usb_product_id)
-      self.application.sound_error = 1
     else:
       try:		# This exception occurs for the Peabody SDR.  Thanks to ON7VQ for figuring out the problem,
         usb_dev.set_configuration()        # and to David, AE9RB, for the fix.
@@ -63,7 +81,6 @@ class Hardware(BaseHardware):
       except:
         if DEBUG: traceback.print_exc()
         text = "No permission to access the SoftRock USB interface"
-        self.application.sound_error = 1
       else:
         self.usb_dev = usb_dev		# success
         if len(ret) == 2:
@@ -78,7 +95,7 @@ class Hardware(BaseHardware):
           self.key_thread = KeyThread(usb_dev, self.conf.key_poll_msec / 1000.0, self.conf.key_hang_time)
           self.key_thread.start()
     #self.application.bottom_widgets.info_text.SetLabel(text)
-    if DEBUG:
+    if DEBUG and usb_dev:
       print ('Startup freq', self.GetStartupFreq())
       print ('Run freq', self.GetFreq())
       print ('Address 0x%X' % usb_dev.ctrl_transfer(IN, 0x41, 0, 0, 1)[0])
@@ -203,7 +220,7 @@ class Hardware(BaseHardware):
       if n1 < 1:
         n1 = 1
       else:
-        n1 = ((n1 + 1) / 2) * 2
+        n1 = ((n1 + 1) // 2) * 2
       dco = (freq * 1.0) * hsdiv * n1
       # Since we're starting with max hsdiv, this can only happen if
       # freq was larger than we can handle

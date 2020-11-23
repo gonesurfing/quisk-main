@@ -1,3 +1,4 @@
+from __future__ import absolute_import
 from softrock import hardware_usb_new as quisk_hardware
 from softrock import widgets_tx as quisk_widgets
 

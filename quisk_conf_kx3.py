@@ -1,3 +1,4 @@
+from __future__ import absolute_import
 # Please do not change this configuration file for Quisk.  Copy it to
 # your own config file and make changes there.
 #

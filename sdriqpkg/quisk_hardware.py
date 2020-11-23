@@ -2,6 +2,8 @@
 # It provides support for the SDR-IQ by RfSpace.
 
 from __future__ import print_function
+from __future__ import absolute_import
+from __future__ import division
 
 import _quisk as QS
 try:

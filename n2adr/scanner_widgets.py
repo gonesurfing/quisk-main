@@ -4,6 +4,8 @@
 # This module is used to add extra widgets to the QUISK screen.
 
 from __future__ import print_function
+from __future__ import absolute_import
+from __future__ import division
 
 import wx, time
 import _quisk as QS
@@ -79,13 +81,13 @@ class BottomWidgets:	# Add extra widgets to the bottom of the screen
     if self.scan_n is None:
       self.scan_n = self.scan_n1
     if self.direction > 0:	# left click; go up
-      seq = range(self.scan_n + 1, self.scan_n2 + 1)
+      seq = list(range(self.scan_n + 1, self.scan_n2 + 1))
       if not self.keep_going:
-        seq += range(self.scan_n1, self.scan_n)
+        seq += list(range(self.scan_n1, self.scan_n))
     else:					# right click; go down
-      seq = range(self.scan_n - 1, self.scan_n1 - 1, -1)
+      seq = list(range(self.scan_n - 1, self.scan_n1 - 1, -1))
       if not self.keep_going:
-        seq += range(self.scan_n2, self.scan_n, -1)
+        seq += list(range(self.scan_n2, self.scan_n, -1))
     for n in seq:
       freq = lst[n]
       if not QS.get_squelch(freq - vfo):
@@ -103,14 +105,14 @@ class BottomWidgets:	# Add extra widgets to the bottom of the screen
       if n >= len(lst):
         n = 0
       freq = lst[n]
-      vfo = freq + sample_rate * 4 / 10
+      vfo = freq + sample_rate * 4 // 10
       app.ChangeHwFrequency(freq - vfo, vfo, 'Repeater', event)
     else:					# right click; go down
       n = self.scan_n1 - 1
       if n < 0:
         n = len(lst) - 1
       freq = lst[n]
-      vfo = freq - sample_rate * 4 / 10
+      vfo = freq - sample_rate * 4 // 10
       app.ChangeHwFrequency(freq - vfo, vfo, 'Repeater', event)
   def OnBtnScanner(self, event):
     self.direction = self.btnScanner.direction		# +1 for left -> go up; -1 for down

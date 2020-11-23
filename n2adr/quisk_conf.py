@@ -2,8 +2,26 @@
 # The files to control my 2010 transceiver and for the improved version HiQSDR
 # are in the package directory HiQSDR.
 
-favorites_file_path = "../quisk_favorites.txt"
-settings_file_path  = "../quisk_settings.json"
+import sys
+
+sample_rate = 48000
+
+if sys.platform == 'win32':
+  favorites_file_path = "C:/pub/quisk_favorites.txt"
+  settings_file_path  = "C:/pub/quisk_settings.json"
+  name_of_sound_play = ""
+  name_of_sound_capt = "Primary"
+  microphone_name = ""
+  name_of_mic_play = ""
+else:
+  favorites_file_path = "/home/jim/pub/quisk_favorites.txt"
+  settings_file_path  = "/home/jim/pub/quisk_settings.json"
+  name_of_sound_play = ""
+  name_of_sound_capt = "hw:0"
+  microphone_name = ""
+  name_of_mic_play = ""
+  #lin_microphone_name = "ALC1150 Analog"
+  #lin_name_of_mic_play = "USB Sound Device"
 
 # These are for CM106 like sound device
 #n2adr_sound_usb_mic = 'alsa:USB Sound Device'

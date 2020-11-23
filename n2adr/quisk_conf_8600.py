@@ -17,6 +17,10 @@
 # Instead copy it to your own .quisk_conf.py and make changes there.
 # See quisk_conf_defaults.py for more information.
 
+from __future__ import print_function
+from __future__ import absolute_import
+from __future__ import division
+
 import time, traceback, os
 import _quisk as QS
 import serial			# From the pyserial package
@@ -102,7 +106,7 @@ class Hardware(BaseHardware):
         else:
           self.repeaters[fout] = text
     fp.close()
-    for freq, text in self.repeaters.items():
+    for freq, text in list(self.repeaters.items()):
       if len(text) > 80:
         t =''
         stations = text.split(';')
@@ -110,7 +114,7 @@ class Hardware(BaseHardware):
           s = s.strip()
           t = t + s.split()[0] + ' ' + s.split(',')[1] + '; '
         self.repeaters[freq] = t
-    self.rpt_freq_list = self.repeaters.keys()
+    self.rpt_freq_list = list(self.repeaters)
     self.rpt_freq_list.sort()
   def OpenPort(self):
     if sys.platform == "win32":
@@ -161,7 +165,7 @@ class Hardware(BaseHardware):
     if vfo_freq != self.vfo_frequency and vfo_freq >= 10000:
       self.vfo_frequency = vfo_freq
       # Calculate new AR8600 and hardware frequencies
-      ar8600 = (vfo_freq + 50000) / 100000 * 100000 - 200000
+      ar8600 = (vfo_freq + 50000) // 100000 * 100000 - 200000
       if self.ar8600_frequency != ar8600:
         self.ar8600_frequency = ar8600
         self.SendAR8600('RF%010d\r' % ar8600)

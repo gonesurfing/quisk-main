@@ -10,6 +10,7 @@
 # These are the attributes we watch:  Rx frequency, mode
 
 from __future__ import print_function
+from __future__ import absolute_import
 
 DEBUG = 0
 

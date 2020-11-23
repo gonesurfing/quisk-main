@@ -5,6 +5,7 @@
 #include <sys/types.h>
 
 #include "quisk.h"
+#include "freedv.h"
 
 int DEBUG;
 
@@ -18,6 +19,21 @@ typedef struct {	// from comp.h
 struct freedv;		// from freedv_api.h
 typedef void (*freedv_callback_rx)(void *, char);
 typedef char (*freedv_callback_tx)(void *);
+/* Protocol bits are packed MSB-first */
+/* Called when a frame containing protocol data is decoded */
+typedef void (*freedv_callback_protorx)(void *, char *);
+/* Called when a frame containing protocol data is to be sent */
+typedef void (*freedv_callback_prototx)(void *, char *);
+/* Data packet callbacks */
+/* Called when a packet has been received */
+typedef void (*freedv_callback_datarx)(void *, unsigned char *packet, size_t size);
+/* Called when a new packet can be send */
+typedef void (*freedv_callback_datatx)(void *, unsigned char *packet, size_t *size);
+
+/* advanced freedv open options required by some modes */
+struct freedv_advanced {	// from freedv_api.h
+	int interleave_frames;
+};
 
 #ifdef MS_WINDOWS
 #include <windows.h>
@@ -40,9 +56,11 @@ void * hLib;
 #endif
 
 static int requested_mode = -1;			// requested mode
-static int current_mode = -1;			// the current running mode
+int freedv_current_mode = -1;			// the current running mode
 static int quisk_freedv_squelch;
+static int interleave_frames = 1;
 static int freedv_version = -1;
+static int quisk_set_tx_bpf = 1;
 
 #define SPEECH_BUF_SIZE		3000		// speech buffer size
 static struct _rx_channel{
@@ -61,6 +79,7 @@ static struct _rx_channel{
 // FreeDV API functions:
 // open, close
 struct freedv * (*freedv_open)(int mode);
+struct freedv * (*freedv_open_advanced)(int mode, struct freedv_advanced *adv);
 void (*freedv_close)(struct freedv *freedv);
 // Transmit
 void (*freedv_tx)(struct freedv *freedv, short *, short *);
@@ -71,11 +90,12 @@ int (*freedv_rx)(struct freedv *freedv, short *, short demod_in[]);
 int (*freedv_floatrx)(struct freedv *freedv, short *, float demod_in[]);
 int (*freedv_comprx)(struct freedv *freedv, short *, COMP demod_in[]);
 // Set parameters
-void (*freedv_set_callback_txt)(struct freedv *freedv, freedv_callback_rx rx, freedv_callback_tx tx, void *callback_state);
+void (*freedv_set_callback_txt)		(struct freedv *freedv, freedv_callback_rx rx, freedv_callback_tx tx, void *callback_state);
 void (*freedv_set_test_frames)			(struct freedv *freedv, int test_frames);
 void (*freedv_set_smooth_symbols)		(struct freedv *freedv, int smooth_symbols);
 void (*freedv_set_squelch_en)			(struct freedv *freedv, int squelch_en);
 void (*freedv_set_snr_squelch_thresh)	(struct freedv *freedv, float snr_squelch_thresh);
+void (*freedv_set_tx_bpf)		(struct freedv *freedv, int val);
 // Get parameters
 int (*freedv_get_version)(void);
 void (*freedv_get_modem_stats)(struct freedv *freedv, int *sync, float *snr_est);
@@ -85,8 +105,15 @@ int (*freedv_get_n_max_modem_samples)	(struct freedv *freedv);
 int (*freedv_get_n_nom_modem_samples)	(struct freedv *freedv);
 int (*freedv_get_total_bits)			(struct freedv *freedv);
 int (*freedv_get_total_bit_errors)		(struct freedv *freedv);
-// Below this line, version 11 and up is required.
+//
 int (*freedv_get_sync)					(struct freedv *freedv);
+void (*freedv_set_callback_protocol)	(struct freedv *freedv, freedv_callback_protorx rx, freedv_callback_prototx tx, void *callback_state);
+void (*freedv_set_callback_data)	(struct freedv *freedv, freedv_callback_datarx datarx, freedv_callback_datatx datatx, void *callback_state);
+
+/* Called when a new packet can be sent */
+void my_datatx(void *callback_state, unsigned char *packet, size_t *size) {
+	*size = 0;
+}
 
 static void GetAddrs(void)
 {
@@ -143,6 +170,7 @@ static void GetAddrs(void)
 
 // open, close
 	freedv_open = GET_ADDR("freedv_open");
+	freedv_open_advanced = GET_ADDR("freedv_open_advanced");
 	freedv_close = GET_ADDR("freedv_close");
 // Transmit
 	freedv_tx = GET_ADDR("freedv_tx");
@@ -154,10 +182,13 @@ static void GetAddrs(void)
 	freedv_comprx = GET_ADDR("freedv_comprx");
 // Set parameters
 	freedv_set_callback_txt = GET_ADDR("freedv_set_callback_txt");
+	freedv_set_callback_protocol = GET_ADDR("freedv_set_callback_protocol");
+	freedv_set_callback_data = GET_ADDR("freedv_set_callback_data");
 	freedv_set_test_frames = GET_ADDR("freedv_set_test_frames");
 	freedv_set_smooth_symbols = GET_ADDR("freedv_set_smooth_symbols");
 	freedv_set_squelch_en = GET_ADDR("freedv_set_squelch_en");
 	freedv_set_snr_squelch_thresh = GET_ADDR("freedv_set_snr_squelch_thresh");
+	freedv_set_tx_bpf = GET_ADDR("freedv_set_tx_bpf");
 // Get parameters
 	freedv_get_modem_stats = GET_ADDR("freedv_get_modem_stats");
 	freedv_get_test_frames = GET_ADDR("freedv_get_test_frames");
@@ -200,7 +231,7 @@ static int quisk_freedv_rx(complex double * cSamples, double * dsamples, int cou
 	need = freedv_nin(hF);
 	for (i = 0; i < count; i++) {
 		cx = cRxFilterOut(cSamples[i], bank, 0);
-		if (rxMode == 12)		// lower sideband
+		if (rxMode == FDV_L)		// lower sideband
 			cx = conj(cx);
 #if 0
 		pCh->demod_in[pCh->rxdata_index].real = creal(cx) / scale;
@@ -217,7 +248,7 @@ static int quisk_freedv_rx(complex double * cSamples, double * dsamples, int cou
 					sync = freedv_get_sync(hF);
 				else
 					freedv_get_modem_stats(hF, &sync, NULL);
-				if (current_mode == 0) {		// mode 1600
+				if (freedv_current_mode == 0) {		// mode 1600
 					if (sync)		// throw away speech if not in sync
 						pCh->speech_available += have;
 				}
@@ -308,7 +339,7 @@ static int quisk_freedv_tx(complex double * cSamples, double * dsamples, int cou
 			}
 		}
 	}
-	if (rxMode == 12)
+	if (rxMode == FDV_L)
 		for (i = 0; i < nout; i++)
 			cSamples[i] = conj(cSamples[i]);
 	return nout;
@@ -372,7 +403,7 @@ static void CloseFreedv(void)	// Called from the GUI thread or sound thread
 	}
 	quisk_freedv_rx(NULL, NULL, 0, 0);
 	quisk_freedv_tx(NULL, NULL, 0);
-	current_mode = -1;
+	freedv_current_mode = -1;
 }
 
 static int OpenFreedv(void)	// Called from the GUI thread or sound thread
@@ -383,7 +414,20 @@ static int OpenFreedv(void)	// Called from the GUI thread or sound thread
 	if ( ! hLib)
 		GetAddrs();		// Get the entry points for funtions in the codec2 library
 	if (DEBUG) printf("freedv_open: version %d\n", freedv_version);
-	if (freedv_version < 10 || (hF = freedv_open(requested_mode)) == NULL) {
+	if (freedv_version < 10) {
+		CloseFreedv();
+		requested_mode = -1;
+		return 0;	// failure
+	}
+    	if (requested_mode == FREEDV_MODE_700D && freedv_open_advanced) {
+        	struct freedv_advanced adv;
+        	adv.interleave_frames = interleave_frames;
+        	hF = freedv_open_advanced(requested_mode, &adv);
+    	}
+	else {
+        	hF = freedv_open(requested_mode);
+	}
+	if (hF == NULL) {
 		CloseFreedv();
 		requested_mode = -1;
 		return 0;	// failure
@@ -392,9 +436,15 @@ static int OpenFreedv(void)	// Called from the GUI thread or sound thread
 	quisk_dvoice_freedv(&quisk_freedv_rx, &quisk_freedv_tx);
 	if (quisk_tx_msg[0])
 		freedv_set_callback_txt(hF, &put_next_rx_char, &get_next_tx_char, NULL);
-    else
+	else
 		freedv_set_callback_txt(hF, &put_next_rx_char, NULL, NULL);
+	if (freedv_set_callback_protocol)
+ 		freedv_set_callback_protocol(hF, NULL, NULL, NULL);
+	if (freedv_set_callback_data)
+		freedv_set_callback_data(hF, NULL, my_datatx, NULL);
 	freedv_set_squelch_en(hF, quisk_freedv_squelch);
+	if (freedv_set_tx_bpf)
+		freedv_set_tx_bpf(hF, quisk_set_tx_bpf);
 	n_max_modem_samples = freedv_get_n_max_modem_samples(hF);
 	for (i = 0; i < MAX_RECEIVERS; i++) {
 		rx_channel[i].rxdata_index = 0;
@@ -412,13 +462,13 @@ static int OpenFreedv(void)	// Called from the GUI thread or sound thread
 	if (DEBUG) printf("n_nom_modem_samples %d\n", freedv_get_n_nom_modem_samples(rx_channel[0].hFreedv));
 	if (DEBUG) printf("n_speech_samples %d\n", freedv_get_n_speech_samples(rx_channel[0].hFreedv));
 	if (DEBUG) printf("n_max_modem_samples %d\n", n_max_modem_samples);
-	current_mode = requested_mode;
+	freedv_current_mode = requested_mode;
 	return 1;		// success
 }
 
 void quisk_check_freedv_mode(void)
 {	// see if we need to change the mode
-	if (requested_mode == current_mode)
+	if (requested_mode == freedv_current_mode)
 		return;
 	if (DEBUG) printf("Change in mode to %d\n", requested_mode);
 	CloseFreedv();
@@ -446,16 +496,24 @@ PyObject * quisk_freedv_close(PyObject * self, PyObject * args)	// Called from t
 
 PyObject * quisk_freedv_set_options(PyObject * self, PyObject * args, PyObject * keywds)	// Called from the GUI thread.
 {  // Call with keyword arguments ONLY to change parameters.  Call before quisk_freedv_open() to set an initial mode.
-	int mode;				// Call again to change the mode.
+	int mode=-1;				// Call again to change the mode.
+	int bpf=-1;
 	char * ptMsg=NULL;
-	static char * kwlist[] = {"mode", "tx_msg", "DEBUG", "squelch", NULL} ;
+	static char * kwlist[] = {"mode", "tx_msg", "DEBUG", "squelch", "interleave_frames", "set_tx_bpf", NULL} ;
 	struct freedv * hFreedv;
 
-	if (!PyArg_ParseTupleAndKeywords (args, keywds, "|isii", kwlist, &mode, &ptMsg, &DEBUG, &quisk_freedv_squelch))
+	if (!PyArg_ParseTupleAndKeywords (args, keywds, "|isiiii", kwlist, &mode, &ptMsg, &DEBUG, &quisk_freedv_squelch, &interleave_frames, &bpf))
 		return NULL;
 	if (ptMsg)
 		strncpy(quisk_tx_msg, ptMsg, TX_MSG_SIZE);
-	if (current_mode < 0)		// not started
+	if (bpf != -1) {
+		quisk_set_tx_bpf = bpf;
+		if (freedv_set_tx_bpf && rx_channel[0].hFreedv)
+			freedv_set_tx_bpf(rx_channel[0].hFreedv, quisk_set_tx_bpf);
+	}
+	if (mode == -1)
+		;
+	else if (freedv_current_mode < 0)		// not started
 		requested_mode = mode;
 	else if (freedv_version == 10 && mode == 0)
 		requested_mode = mode;

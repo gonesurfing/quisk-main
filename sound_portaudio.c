@@ -20,12 +20,12 @@ extern struct sound_conf quisk_sound_state;	// Current sound status
 static float fbuffer[SAMP_BUFFER_SIZE];		// Buffer for float32 samples from sound
 
 int quisk_read_portaudio(struct sound_dev * dev, complex double * cSamples)
-{	// Read sound samples from the soundcard.
+{	// cSamples can be NULL to discard samples
+	// Read sound samples from the soundcard.
 	// Samples are converted to 32 bits with a range of +/- CLIP32 and placed into cSamples.
 	int i;
 	long avail;
 	int nSamples;
-	complex double c;
 	PaError error;
 	float fi, fq;
 
@@ -46,19 +46,19 @@ int quisk_read_portaudio(struct sound_dev * dev, complex double * cSamples)
 		dev->dev_error++;
 	}
 	nSamples = 0;
-	for (i = 0; avail; i += dev->num_channels, nSamples++, avail--) {
+	for (i = 0; avail; i += dev->num_channels, avail--) {
 		fi = fbuffer[i + dev->channel_I];
 		fq = fbuffer[i + dev->channel_Q];
 		if (fi >=  1.0 || fi <= -1.0)
 			dev->overrange++;	// assume overrange returns max int
 		if (fq >=  1.0 || fq <= -1.0)
 			dev->overrange++;
-		cSamples[nSamples] = (fi + I * fq) * CLIP32;
-	}
-	for (i = 0; i < nSamples; i++) {	// DC removal; R.G. Lyons page 553
-		c = cSamples[i] + dev->dc_remove * 0.95;
-		cSamples[i] = c - dev->dc_remove;
-		dev->dc_remove = c;
+		if (cSamples)
+			cSamples[nSamples] = (fi + I * fq) * CLIP32;
+		nSamples++;
+		if (nSamples > SAMP_BUFFER_SIZE * 8 / 10)
+			break;
+
 	}
 	return nSamples;
 }
@@ -253,7 +253,7 @@ static int quisk_pa_name2index (struct sound_dev * dev, int is_capture)
 		return 0;
 	}
 	snprintf (quisk_sound_state.err_msg, QUISK_SC_SIZE,
-		"Did not recognize portaudio device %s", dev->name);
+		"Did not recognize portaudio device %.90s", dev->name);
 	return 1;
 }
 

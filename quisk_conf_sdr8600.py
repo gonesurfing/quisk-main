@@ -1,3 +1,5 @@
+from __future__ import absolute_import
+from __future__ import division
 # These are the configuration parameters for receiving the
 # 10.7 MHz IF output of the AOR AR8600 receiver with the
 # SDR-IQ by RfSpace.  This results in a 100 kHz to 3 GHz

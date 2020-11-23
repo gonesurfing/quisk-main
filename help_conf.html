@@ -9,7 +9,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 </head><body>
 
-<h3> Help with Quisk Configuration (October 2015) </h3>
+<h3> Help with Quisk Configuration</h3>
 
 <h5> Quick Start </h5>
 <p>
@@ -25,10 +25,10 @@ the ConfigFileRadio tab, you can see your settings but not change them, because 
 config file.  To change settings, you must name them; that is, create a name for the radio using that block of settings.
 </p>
 <p>
-Suppose you have a SoftRock, you created a configuration file for your SoftRock, and you start Quisk with that
-config file.  To use Quisk internal settings, just rename ConfigFileRadio to a new name of your choosing, such as
-"SoftRock", "My Radio", or anything else you want.  Then you can change the settings.  On the "Radios" tab, select
-the new radio as the startup radio so that Quisk starts up with those settings instead of ConfigFileRadio.
+When you first install Quisk, you will not have any settings for your radio. Press the Config button and go to the Radios screen.
+Then create a radio by specifying the general hardware type and give it a name of your choosing.
+For a Hermes-Lite, specify "Hermes" as the hardware type and call it "HL2" (or some other name). Press "Add" and
+a new tab for your radio will appear. Look through the various settings on the HL2 tab.
 </p>
 <p>
 Suppose you just purchased a HiQSDR, but have no config file for it.  When you start Quisk, ConfigFileRadio
@@ -64,11 +64,7 @@ making changes to settings, it is wise to use "Ask me".  If things go wrong and 
 won't start, you can select ConfigFileRadio at startup and continue to make changes to your
 new radio.
 </dd><br>
-<dt>I want Quisk to operate as before.</dt>
-<dd>
-Just ignore this feature.  Do not create any named radios and Quisk will operate exactly as before.
-</dd><br>
-<dt>I have multiple config files and multiple hardwares.</dt>
+<dt>I have multiple custom config files and multiple hardwares.</dt>
 <dd>
 Specify ConfigFileRadio as the startup radio on the Radios tab.  Then start Quisk with each of your
 config files.  For each config file, rename ConfigFileRadio to a suitable name.

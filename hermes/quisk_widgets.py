@@ -4,8 +4,10 @@
 # This module is used to add extra widgets to the QUISK screen.
 
 from __future__ import print_function
+from __future__ import absolute_import
+from __future__ import division
 
-import wx
+import math, wx
 
 class BottomWidgets:	# Add extra widgets to the bottom of the screen
   def __init__(self, app, hardware, conf, frame, gbs, vertBox):
@@ -69,27 +71,63 @@ class BottomWidgets:	# Add extra widgets to the bottom of the screen
     sl = event.GetEventObject()
     value = sl.GetValue()
     self.hardware.ChangeLNA(value)
-  def UpdateText(self):
+  def Code2Temp(self):		# Convert the HermesLite temperature code to the temperature
     temp = self.hardware.hermes_temperature
-    ## For best accuracy, 3.26 should be a user's measured 3.3V supply voltage.
+    # For best accuracy, 3.26 should be a user's measured 3.3V supply voltage.
     temp = (3.26 * (temp/4096.0) - 0.5)/0.01
-    temp = (" Temp %3.1f" % temp) + unichr(0x2103)
-    self.text_temperature.SetLabel(temp)
+    return temp
+  def Code2Current(self):	# Convert the HermesLite PA current code to amps
     current = self.hardware.hermes_pa_current
-    ## 3.26 Ref voltage
-    ## 4096 steps in ADC
-    ## Gain of x50 for sense amp
-    ## Sense resistor is 0.04 Ohms
+    # 3.26 Ref voltage
+    # 4096 steps in ADC
+    # Gain of x50 for sense amp
+    # Sense resistor is 0.04 Ohms
     current = ((3.26 * (current/4096.0))/50.0)/0.04
-    current = " Ampl %4d ma" % (1000*current)
-    self.text_pa_current.SetLabel(current)
+    # Scale by resistor voltage divider 1000/(1000+270) at input of slow ADC
+    current = current / (1000.0/1270.0)
+    return current
+  def Code2FwdRevWatts(self):	# Convert the HermesLite fwd/rev power code to watts forward and reverse
+    #print (self.hardware.hermes_rev_power, self.hardware.hermes_fwd_power)
     fwd = self.hardware.hermes_fwd_power
-    fwd = " %3.1f watts" % float(fwd)
-    self.text_fwd_power.SetLabel(fwd)
+    fwd = self.hardware.InterpolatePower(fwd)
     rev = self.hardware.hermes_rev_power
-    swr = 1.2
-    swr = " SWR %3.1f" % swr
-    self.text_swr.SetLabel(swr)
+    rev = self.hardware.InterpolatePower(rev)
+    # Which voltage is forward and reverse depends on the polarity of the current sense transformer
+    if fwd >= rev:
+      return fwd, rev
+    else:
+      return rev, fwd
+  def UpdateText(self):
+    # Temperature
+    temp = self.Code2Temp()
+    temp = (" Temp %3.0f" % temp) + u'\u2103'
+    self.text_temperature.SetLabel(temp)
+    # power amp current
+    current = self.Code2Current()
+    current = " PA %4.0f ma" % (1000*current)
+    self.text_pa_current.SetLabel(current)
+    # forward and reverse power
+    fwd, rev = self.Code2FwdRevWatts()
+    # forward less reverse power
+    power = fwd - rev
+    if power < 0.0:
+      power = 0.0
+    text = " PA %3.1f watts" % power
+    self.text_fwd_power.SetLabel(text)
+    # SWR
+    if fwd >= 0.05:
+      gamma = math.sqrt(rev / fwd)
+      if gamma < 0.98:
+        swr = (1.0 + gamma) / (1.0 - gamma)
+      else:
+        swr = 99.0
+      if swr < 9.95:
+        text = " SWR %4.2f" % swr
+      else:
+        text = " SWR %4.0f" % swr
+    else:
+      text = " SWR  ---"
+    self.text_swr.SetLabel(text)
   def OnTextDataMenu(self, event):
     btn = event.GetEventObject()
     btn.PopupMenu(self.text_data_menu, (0,0))

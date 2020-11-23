@@ -1,3 +1,5 @@
+from __future__ import absolute_import
+from __future__ import division
 #  ** This is the file quisk_conf_defaults.py which contains defaults for Quisk. **
 #  
 # Please do not change this configuration file quisk_conf_defaults.py.
@@ -55,10 +57,14 @@ quisk_widgets = None
 
 use_sdriq = 0						# Get ADC samples from SDR-IQ is not used
 use_rx_udp = 0						# Get ADC samples from UDP is not used
+use_soapy = 0						# Get ADC samples from SoapySDR is not used
 sample_rate = 48000					# name_of_sound_capt hardware sample rate in Hertz
 if sys.platform == "win32":
   name_of_sound_capt = "Primary"
   name_of_sound_play = "Primary"
+elif sys.platform == "darwin":
+  name_of_sound_capt = "pulse"
+  name_of_sound_play = "pulse"
 else:
   name_of_sound_capt = "hw:0"		# Name of soundcard capture hardware device.
   name_of_sound_play = "hw:0"
@@ -113,14 +119,14 @@ repeater_delay = 0.25
 # If you get your I/Q samples from a sound card, you will need to correct the
 # amplitude and phase for inaccuracies in the analog hardware.  The correction is
 # entered using the controls from the "Rx Phase" button on the config screen.
-# No correction is 1.00.  This controls the range of the control.
+# You must enter a positive number.  This controls the range of the control.
 rx_max_amplitude_correct = 0.2
 
 ## rx_max_phase_correct			Max phase correct, number
 # If you get your I/Q samples from a sound card, you will need to correct the
 # amplitude and phase for inaccuracies in the analog hardware.  The correction is
 # entered using the controls from the "Rx Phase" button on the config screen.
-# No correction is 0.00.  This controls the range of the control in degrees.
+# You must enter a positive number.  This controls the range of the control in degrees.
 rx_max_phase_correct = 10.0
 
 ## mic_out_volume		Tx audio level, number
@@ -202,6 +208,7 @@ bandAmplPhase = {}				# Empty dictionary to start
 # Use 2 for the HiQSDR.
 #use_rx_udp = 2
 #use_rx_udp = 1
+#use_rx_udp = 17
 
 ## tx_level		Tx Level, dict
 # tx_level sets the transmit level 0 to 255 for each band.  The None band is the default.
@@ -290,27 +297,28 @@ sndp_active = True
 # This is the type of UDP hardware.  Use 10 for the Hermes protocol.
 #use_rx_udp = 10
 
-## rx_udp_ip				IP address, text
-# This is the IP address of your hardware.  Or enter nothing to use DHCP.
-#rx_udp_ip = ""
-#rx_udp_ip = "192.168.1.196"
-#rx_udp_ip = "192.168.2.196"
+## udp_rx_ip		Hermes known IP, text
+# Leave this blank to find the Hermes hardware with the usual UDP broadcast method. 
+# But this will not work on a VPN or when broadcasts are not routed
+# to remote networks. In that case, enter the known IP address of the Hermes hardware.
+udp_rx_ip = ''
+#udp_rx_ip = '192.168.1.86'
 
 ## rx_udp_port				Hardware UDP port, integer
 # This is the UDP port number of your hardware.
 #rx_udp_port = 1024
 
-## rx_udp_ip_netmask		Network netmask, text
-# This is the netmask for the network.
-#rx_udp_ip_netmask = '255.255.255.0'
+## rx_udp_ip				IP change, text
+# This item should be left blank. It is used to change the IP address of the hardware to a different
+# IP once the hardware is found by the broadcast method. Not all Hermes firmware supports changing the IP address.
+#rx_udp_ip = ""
 
 ## tx_ip					Transmit IP, text
 # Leave this blank to use the same IP address as the receive hardware.  Otherwise, enter "disable"
 # to disable sending transmit I/Q samples, or enter the actual IP address.  You must enter "disable"
-# if you have multiple hardwares on the network, and only one should transmit.
+# if you have multiple hardwares on the network, and only one should transmit. This item is normally blank.
 tx_ip = ""
 #tx_ip = "disable"
-#tx_ip = "192.168.1.201"
 
 ## tx_audio_port			Tx audio UDP port, integer
 # This is the UDP port for transmit audio I/Q samples.  Enter zero to calculate this from the
@@ -378,14 +386,95 @@ hermes_bias_adjust = False
 hermes_power_amp = False
 #hermes_power_amp = True
 
-## Hermes_BandDict		Hermes Bus, dict
-# The Hermes_BandDict sets the 7 bits on the J16 connector.
+## power_meter_calib_name		Power meter calibration, text choice
+# This is the calibration table used to convert the power sensor voltage measured by the ADC to the transmit power display.
+# It is a table of ADC codes and the corresponding measured power level.  If you have a power meter, you can create your own
+# table by selecting "New". Then enter ten or more power measurements from low to full power.
+# For the Hermes-Lite version E3 filter board, use the built-in table "HL2FilterE3".
+# Changes are immediate (no need to restart).
+power_meter_calib_name = 'HL2FilterE3'
+
+## hermes_disable_sync			Disable Power Supply Sync, boolean
+# This option only applies to the Hermes Lite 2.
+# When True, the FPGA will not generate a switching frequency for the power supply to
+# move the harmonics out of amateur bands.
+# Changes are immediate (no need to restart).
+hermes_disable_sync = False
+#hermes_disable_sync = True
+
+## Hware_Hl2_EepromIP			Eeprom IP Address, text
+# This is the IP address stored in the Hermes Lite EEPROM. It is only used at power on. If you set an address here
+# be sure to write it down. And you may want to set "Hermes known IP" too. Make sure the address does not conflict
+# with your DHCP server.
+Hware_Hl2_EepromIP = '192.168.1.6'
+#Hware_Hl2_EepromIP = '192.168.1.241'
+
+## Hware_Hl2_EepromIPUse		Eeprom IP Usage, text choice
+# This is the way the EEPROM IP address is used at power on.
+# "Ignore" means it is not used at all. "Set address" means DHCP is not used and the EEPROM IP address is used.
+# "Use DHCP first" means the EEPROM IP address is only used if DHCP fails.
+Hware_Hl2_EepromIPUse = 'Ignore'
+#Hware_Hl2_EepromIPUse = 'Use DHCP first'
+#Hware_Hl2_EepromIPUse = 'Set address'
+
+## Hware_Hl2_EepromMAC			Eeprom MAC Address, text
+# This is two numbers to be used as the last two bytes of the MAC address. It is only used at power on.
+# If you have multiple Hermes Lites, each one must have a different MAC address.
+Hware_Hl2_EepromMAC = '0xA1 0x6B'
+#Hware_Hl2_EepromMAC = '0x4C 0x33'
+
+## Hware_Hl2_EepromMACUse		Eeprom MAC Usage, text choice
+# This is the way the EEPROM MAC address is used at power on.
+# "Ignore" means it is not used at all. "Set address" means the address is used.
+Hware_Hl2_EepromMACUse = 'Ignore'
+#Hware_Hl2_EepromMACUse = 'Set address'
+
+## hermes_TxLNA_dB			LNA during Tx dB, integer
+# During transmit the low noise Rx amplifier gain changes to this value (in dB) if the hardware supports it.
+# Changes are immediate (no need to restart).
+hermes_TxLNA_dB = 21
+
+# These are known power meter calibration tables. This table is not present in the JSON settings file.
+power_meter_std_calibrations = {}
+power_meter_std_calibrations['HL2FilterE3'] = [[ 0, 0.0 ], [ 25.865384615384617, 0.0025502539351328003 ], [ 101.02453987730061, 0.012752044999999998 ], 
+          [ 265.2901234567901, 0.050600930690879994 ], [ 647.9155844155844, 0.21645831264800003 ], [ 1196.5935483870967, 0.66548046472992 ], 
+          [ 1603.7032258064517, 1.1557229391679997 ], [ 2012.3271604938273, 1.811892166688 ], [ 2616.7727272727275, 3.0085848760319993 ], 
+          [ 3173.818181818182, 4.3927428485119995 ], [ 3382.7922077922076, 4.9791328857920005 ], [ 3721.0714285714284, 6.024750791808321 ], 
+          [ 4093.1785714285716, 7.28994845808807 ], [ 4502.496428571429, 8.820837634286566 ], [ 4952.746071428572, 10.673213537486745 ] ]
+#power_meter_std_calibrations['HL2FilterE1'] = [[0, 0.0], [9.07, 0.002], [54.98, 0.014], [148.6, 0.057],
+#          [328.0, 0.208], [611.1, 0.646], [807.0, 1.098], [982.1, 1.6], [1223.3, 2.471], [1517.7, 3.738], [1758.7, 5.02]]
+
+## Hermes_BandDict		Rx IO Bus, dict
+# The Hermes_BandDict sets the 7 bits on the J16 connector for Rx.
 Hermes_BandDict = {
-	'160':0b0000001, '80':0b0000010, '60':0b0000100, '40':0b0001000, '30':0b0010000, '20':0b0100000, '15':0b1000000}
-#Hermes_BandDict = { '160':15, '80':7, '60':11, '40':3, '30':13, '20':5, '17':9, '15':1, '12':14, '10':14, '6':6 }
+	'160':0b0000001, '80':0b1000010, '60':0b1000100, '40':0b1000100, '30':0b1001000, '20':0b1001000, '17':0b1010000,
+	 '15':0b1010000, '12':0b1100000, '10':0b1100000}
 
+## Hermes_BandDictTx		Tx IO Bus, dict
+# The Hermes_BandDictTx sets the 7 bits on the J16 connector for Tx if enabled.
+Hermes_BandDictTx = {'160':0, '80':0, '60':0, '40':0, '30':0, '20':0, '17':0, '15':0, '12':0, '10':0}
 
+## Hermes_BandDictEnTx		Enable Tx Filt, boolean
+# Enable the separate Rx and Tx settings for the J16 connector.
+Hermes_BandDictEnTx = False
+#Hermes_BandDictEnTx = True
 
+## AlexHPF                      Alex High Pass Filters, list
+# This is a list of frequencies and high pass filter settings.
+AlexHPF = [
+    ['3.0', '4.5', 0, 0], ['6.5', '8.5', 0, 0]] + [['', '', 0, 0]] * 6
+## AlexLPF                      Alex Low Pass Filters, list
+# This is a list of frequencies and low pass filter settings.
+AlexLPF = [
+    ['3.0', '4.5', 0, 0], ['6.5', '8.5', 0, 0]] + [['', '', 0, 0]] * 6
+
+## AlexHPF_TxEn                    Alex HPF Tx Enable, boolean
+AlexHPF_TxEn = False
+#AlexHPF_TxEn = True
+
+## AlexLPF_TxEn                    Alex LPF Tx Enable, boolean
+AlexLPF_TxEn = False
+#AlexLPF_TxEn = True
 
 
 ################ Receivers Red Pitaya, The Red Pitaya Project by Pavel Demin.  This uses the Hermes FPGA code.
@@ -401,11 +490,10 @@ Hermes_BandDict = {
 # This is the type of UDP hardware.  Use 10 for the Hermes protocol.
 #use_rx_udp = 10
 
-## rx_udp_ip				IP address, text
-# This is the IP address of your hardware.  Or enter nothing to use DHCP.
+## rx_udp_ip				IP change, text
+# This item should be left blank. It is used to change the IP address of the hardware to a different
+# IP once the hardware is found. Not all Hermes firmware supports changing the IP address.
 #rx_udp_ip = ""
-#rx_udp_ip = "192.168.1.196"
-#rx_udp_ip = "192.168.2.196"
 
 ## rx_udp_port				Hardware UDP port, integer
 # This is the UDP port number of your hardware.
@@ -418,10 +506,9 @@ Hermes_BandDict = {
 ## tx_ip					Transmit IP, text
 # Leave this blank to use the same IP address as the receive hardware.  Otherwise, enter "disable"
 # to disable sending transmit I/Q samples, or enter the actual IP address.  You must enter "disable"
-# if you have multiple hardwares on the network, and only one should transmit.
+# if you have multiple hardwares on the network, and only one should transmit. This item is normally blank.
 tx_ip = ""
 #tx_ip = "disable"
-#tx_ip = "192.168.1.201"
 
 ## tx_audio_port			Tx audio UDP port, integer
 # This is the UDP port for transmit audio I/Q samples.  Enter zero to calculate this from the
@@ -431,6 +518,19 @@ tx_audio_port = 0
 ## rx_udp_clock				Clock frequency Hertz, integer
 # This is the clock frequency of the hardware in Hertz.
 #rx_udp_clock = 125000000
+
+## tx_level		Tx Level, dict
+# tx_level sets the transmit level 0 to 255 for each band.  The None band is the default.
+# The config screen has a slider 0 to 100% so you can reduce the transmit power.  The sliders
+# only appear if your hardware defines the method SetTxLevel().  The hardware only supports a
+# limited adjustment range, so zero is still a small amount of power.
+tx_level = {
+	None:120, '60':110}
+
+## digital_tx_level			Digital Tx power %, integer
+# Digital modes reduce power by the percentage on the config screen.
+# This is the maximum value of the slider.
+#digital_tx_level = 20
 
 ## hermes_code_version		Hermes code version, integer
 # There can be multiple Hermes devices on a network, but Quisk can only use one of these.  If you have multiple
@@ -442,11 +542,63 @@ hermes_code_version = -1
 # hermes devices, you can use this to specify a unique device.  Or use -1 to accept any board.
 hermes_board_id = -1
 
+## hermes_LNA_dB			Initial LNA dB, integer
+# The initial value for the low noise Rx amplifier gain in dB.
+hermes_LNA_dB = 20
+
+## Hermes_BandDict		Hermes Bus, dict
+# The Hermes_BandDict sets the 7 bits on the J16 connector.
+Hermes_BandDict = {
+	'160':0b0000001, '80':0b0000010, '60':0b0000100, '40':0b0001000, '30':0b0010000, '20':0b0100000, '15':0b1000000}
+
+## Hermes_BandDictTx		Tx IO Bus, dict
+# The Hermes_BandDictTx sets the 7 bits on the J16 connector for Tx if enabled.
+Hermes_BandDictTx = {'160':0, '80':0, '60':0, '40':0, '30':0, '20':0, '17':0, '15':0, '12':0, '10':0}
+
+## Hermes_BandDictEnTx		Enable Tx Filt, boolean
+# Enable the separate Rx and Tx settings for the J16 connector.
+Hermes_BandDictEnTx = False
+#Hermes_BandDictEnTx = True
+
+## AlexHPF                      Alex High Pass Filters, list
+# This is a list of frequencies and high pass filter settings.
+AlexHPF = [
+    ['3.0', '4.5', 0, 0], ['6.5', '8.5', 0, 0]] + [['', '', 0, 0]] * 6
+
+## AlexLPF                      Alex Low Pass Filters, list
+# This is a list of frequencies and low pass filter settings.
+AlexLPF = [
+    ['3.0', '4.5', 0, 0], ['6.5', '8.5', 0, 0]] + [['', '', 0, 0]] * 6
+
+## AlexHPF_TxEn                    Alex HPF Tx Enable, boolean
+AlexHPF_TxEn = False
+#AlexHPF_TxEn = True
+
+## AlexLPF_TxEn                    Alex LPF Tx Enable, boolean
+AlexLPF_TxEn = False
+#AlexLPF_TxEn = True
+
+
+################ Receivers SoapySDR, The SoapySDR interface to multiple hardware SDRs.
+## hardware_file_name		Hardware file path, rfile
+# This is the file that contains the control logic for each radio.
+#hardware_file_name = 'soapypkg/quisk_hardware.py'
+
+## widgets_file_name			Widget file path, rfile
+# This optional file adds additional controls for the radio.
+#widgets_file_name = ''
+
+## use_soapy	Use SoapySDR, integer
+# Enter 1 to turn on SoapySDR.
+#use_soapy = 1
+
+# Further items are present in the radio dictionary with names soapy_*
 
 
 ################ Receivers SdrIQ, The SDR-IQ receiver by RfSpace
 ## hardware_file_name		Hardware file path, rfile
 # This is the file that contains the control logic for each radio.
+hardware_file_name = 'quisk_hardware_sdriq.py'
 #hardware_file_name = 'sdriqpkg/quisk_hardware.py'
 
 ## widgets_file_name			Widget file path, rfile
@@ -456,6 +608,7 @@ hermes_board_id = -1
 #
 # For the SDR-IQ the soundcard is not used for capture.
 
+sdriq_decimation = 1250
 
 ## use_sdriq			Hardware by RF-Space, integer choice
 # This is the type of hardware.  For the SdrIQ, use_sdriq is 1.
@@ -463,21 +616,13 @@ hermes_board_id = -1
 
 ## sdriq_name			Serial port, text
 # The name of the SDR-IQ serial port to open.
-#sdriq_name = "/dev/ft2450"
-#sdriq_name = "/dev/ttyUSB2"
+#sdriq_name = "/dev/ttyUSB0"
 #sdriq_name = "COM6"
+#sdriq_name = "/dev/ft2450"
 
 ## sdriq_clock			Clock frequency Hertz, number
 # This is the clock frequency of the hardware in Hertz.
 #sdriq_clock = 66666667.0
-
-## sdriq_decimation		Decimation, integer choice
-# This is the decimation from the SDR-IQ clock.  Decimation by 1250, 600, 500, 360 results in a
-# sample rate of 53333, 111111, 133333, 185185 samples per second.
-#sdriq_decimation = 1250
-#sdriq_decimation = 600
-#sdriq_decimation = 500
-#sdriq_decimation = 360
 
 
 
@@ -612,11 +757,10 @@ sndp_active = True
 # This is the type of UDP hardware.  Use 10 for the Hermes protocol.
 #use_rx_udp = 10
 
-## rx_udp_ip				IP address, text
-# This is the IP address of your hardware.  Or enter nothing to use DHCP.
+## rx_udp_ip				IP change, text
+# This item should be left blank. It is used to change the IP address of the hardware to a different
+# IP once the hardware is found. Not all Hermes firmware supports changing the IP address.
 #rx_udp_ip = ""
-#rx_udp_ip = "192.168.1.196"
-#rx_udp_ip = "192.168.2.196"
 
 ## rx_udp_port				Hardware UDP port, integer
 # This is the UDP port number of your hardware.
@@ -629,10 +773,9 @@ sndp_active = True
 ## tx_ip					Transmit IP, text
 # Leave this blank to use the same IP address as the receive hardware.  Otherwise, enter "disable"
 # to disable sending transmit I/Q samples, or enter the actual IP address.  You must enter "disable"
-# if you have multiple hardwares on the network, and only one should transmit.
+# if you have multiple hardwares on the network, and only one should transmit. This item is normally blank.
 tx_ip = ""
 #tx_ip = "disable"
-#tx_ip = "192.168.1.201"
 
 ## tx_audio_port			Tx audio UDP port, integer
 # This is the UDP port for transmit audio I/Q samples.  Enter zero to calculate this from the
@@ -675,6 +818,65 @@ hermes_LNA_dB = 20
 # The Hermes_BandDict sets the 7 bits on the J16 connector.
 Hermes_BandDict = {
 	'160':0b0000001, '80':0b0000010, '60':0b0000100, '40':0b0001000, '30':0b0010000, '20':0b0100000, '15':0b1000000}
+
+## Hermes_BandDictTx		Tx IO Bus, dict
+# The Hermes_BandDictTx sets the 7 bits on the J16 connector for Tx if enabled.
+Hermes_BandDictTx = {'160':0, '80':0, '60':0, '40':0, '30':0, '20':0, '17':0, '15':0, '12':0, '10':0}
+
+## Hermes_BandDictEnTx		Enable Tx Filt, boolean
+# Enable the separate Rx and Tx settings for the J16 connector.
+Hermes_BandDictEnTx = False
+#Hermes_BandDictEnTx = True
+
+## AlexHPF                      Alex High Pass Filters, list
+# This is a list of frequencies and high pass filter settings.
+AlexHPF = [
+    ['3.0', '4.5', 0, 0], ['6.5', '8.5', 0, 0]] + [['', '', 0, 0]] * 6
+
+## AlexLPF                      Alex Low Pass Filters, list
+# This is a list of frequencies and low pass filter settings.
+AlexLPF = [
+    ['3.0', '4.5', 0, 0], ['6.5', '8.5', 0, 0]] + [['', '', 0, 0]] * 6
+
+## AlexHPF_TxEn                    Alex HPF Tx Enable, boolean
+AlexHPF_TxEn = False
+#AlexHPF_TxEn = True
+
+## AlexLPF_TxEn                    Alex LPF Tx Enable, boolean
+AlexLPF_TxEn = False
+#AlexLPF_TxEn = True
+
+
+################ Receivers Afedri,   The Afedri SDR receiver with the Ethernet interface.
+## hardware_file_name		Hardware file path, rfile
+# This is the file that contains the control logic for each radio.
+#hardware_file_name = 'afedrinet/quisk_hardware.py'
+
+## widgets_file_name			Widget file path, rfile
+# This optional file adds additional controls for the radio.
+#widgets_file_name = ''
+
+## rx_udp_ip				IP address, text
+# This is the IP address of your hardware. Enter 0.0.0.0 to search for the address.
+#rx_udp_ip = "0.0.0.0"
+#rx_udp_ip = "192.168.0.200"
+#rx_udp_ip = "192.168.1.196"
+
+## rx_udp_port				Hardware UDP port, integer
+# This is the base UDP port number of your hardware.
+#rx_udp_port = 50000
+
+## rx_udp_ip_netmask		Network netmask, text
+# This is the netmask for the network.
+#rx_udp_ip_netmask = '255.255.255.0'
+
+## rx_udp_clock				Clock frequency Hertz, integer
+# This is the clock frequency of the hardware in Hertz.
+#rx_udp_clock = 80000000
+
+## default_rf_gain			Default RF gain, integer
+# This is the RF gain when starting.
+#default_rf_gain = 11
 
 
 ################ Sound Devices.  Quisk recognizes eight sound capture and playback devices.
@@ -887,6 +1089,7 @@ digital_rx1_name = ""
 
 ## digital_output_level		Digital output level, number
 # This is the volume control 0.0 to 1.0 for digital playback to fldigi, etc.
+# Changes are immediate (no need to restart).
 digital_output_level = 0.7
 
 # Sound card names:
@@ -981,14 +1184,6 @@ show_pulse_audio_devices = True
 # must equal playback_rate and both must be 48000.
 max_record_minutes = 1.00
 
-## split_rxtx           Split-mode audio, integer choice
-# Quisk can operate in Split mode and can receive both the Tx and Rx frequency signals.  This option
-# controls where the sound goes.  You may need to reverse 1 or 2 depending on your wiring.
-#split_rxtx = 1		# Play both, the higher frequency on real
-split_rxtx = 2		# Play both, the lower frequency on real
-#split_rxtx = 3		# Play receive only
-#split_rxtx = 4		# Play transmit only
-
 # Quisk can save radio sound and samples to files, and can play recorded sound.  There is a button on the
 # Config/Config screen to set the file names.  You can set the initial names with these variables:
 file_name_audio = ""
@@ -1004,10 +1199,11 @@ file_name_playback = ""
 
 ## do_repeater_offset       Use repeater offset, boolean
 # Quisk can implement the frequency shift needed for repeaters.  If the repeater frequency
-# is on the favorites screen, and you tune close (500 Hz) to that frequency, and there
-# is an entry in the "offset" column, and the mode is FM, and do_repeater_offset is True,
-# then Quisk will shift the Tx frequency by the offset when transmitting.  Your hardware
-# file must define the method RepeaterOffset(self, offset=None).
+# is on the favorites screen, and you tune close (500 Hz) to that frequency in FM mode,
+# then Quisk will shift the Tx frequency by the offset when transmitting.
+# Quisk will also supply the CTCSS tone if one is entered.
+# Note that no CTCSS tone is generated if no repeater offset is entered, but you can enter a small offset like 0.001.
+# Your hardware file must define the method RepeaterOffset(self, offset=None).
 do_repeater_offset = False
 #do_repeater_offset = True
 
@@ -1066,6 +1262,7 @@ freq_base = 0
 
 ## cwTone               CW tone frequency in Hertz, integer
 # This is the CW tone frequency in Hertz.
+# Changes are immediate (no need to restart).
 cwTone = 600
 #cwTone = 400
 #cwTone = 800
@@ -1089,7 +1286,7 @@ invertSpectrum = 0      # Do not invert
 # For FM transmit, this is the modulation index.
 modulation_index = 1.67
 
-## pulse_audio_verbose_output		Debug PortAudio, integer choice
+## pulse_audio_verbose_output		Debug PulseAudio, integer choice
 # Use 1 to turn on PulseAudio debug and status messages.  This allows for debugging of both devices and performance.
 pulse_audio_verbose_output = 0
 #pulse_audio_verbose_output = 1
@@ -1099,6 +1296,28 @@ pulse_audio_verbose_output = 0
 # stations.  The data is stored in this file.  If this is blank, the default is the file
 # quisk_favorites.txt in the directory where your config file is located.
 favorites_file_path = ''
+
+## reverse_tx_sideband		Reverse Tx sideband, integer
+# Set to 1 if you want to reverse the sideband when transmitting.
+# For example, to receive on LSB but transmit on USB. This may be necessary for satellite operation
+# depending on the mixing scheme.
+# Changes are immediate (no need to restart).
+reverse_tx_sideband = 0
+#reverse_tx_sideband = 1
+
+## dc_remove_bw			DC remove bandwidth, integer
+# This is the 3 dB bandwidth of the filter centered at zero Hertz that is used to remove DC bias.
+# Choose a bandwidth that suppresses DC and low frequency noise.
+# Enter 1 to select a different filter based on block removal.
+# Enter zero to disable the filter.
+# Changes are immediate (no need to restart).
+#dc_remove_bw =  0
+#dc_remove_bw =  1
+#dc_remove_bw =  20
+#dc_remove_bw =  50
+dc_remove_bw = 100
+#dc_remove_bw = 200
+#dc_remove_bw = 400
 
 
 
@@ -1137,7 +1356,11 @@ dxClPassword = ''
 # dxClExpireTime is the time in minutes until DX Cluster entries are removed.
 dxClExpireTime = 20
 
-## hamlib_ip            IP address for Hamlib, text
+## IQ_Server_IP         Pulse server IP address, text
+#IP Adddress for remote PulseAudio IQ server.
+IQ_Server_IP = ""
+
+## hamlib_ip            IP address for Hamlib Rig 2, text
 # You can control Quisk from Hamlib.  Set the Hamlib rig to 2 and the device for rig 2 to
 # localhost:4575.  Or choose a different name and port here.  Set the same name and port
 # in the controlling program.
@@ -1152,40 +1375,86 @@ hamlib_ip = "localhost"
 hamlib_port = 4532
 #hamlib_port = 0
 
-## IQ_Server_IP         Pulse server IP address, text
-#IP Adddress for remote PulseAudio IQ server.
-IQ_Server_IP = ""
-
 ## digital_xmlrpc_url   URL for control by XML-RPC, text
 # This option is used by the digital modes that send audio to an external
 # program, and receive audio to transmit.  Set Fldigi to upper sideband, XML-RPC control.
 digital_xmlrpc_url = "http://localhost:7362"
 #digital_xmlrpc_url = ""
 
+## lin_hamlib_com1_name		CAT serial port name, text
+# Enter a name to create a serial port so that an external program like N1MM+ or WSJT-X can
+# control Quisk.  Then enter that name into the other program and specify a radio of type "Flex".  This is addition to the
+# "Hamlib NET rigctl" mechanism which is based on a network connection. Leave this blank
+# to turn off the serial port. The port settings are 9600 baud, 8 bits of data, no parity and one stop bit,
+# although other settings are OK too.
+# On Linux, the serial port names are of the form "/tmp/QuiskTTYx"
+# where "x" is 0, 1, 2, etc. Quisk will create the serial port when it starts.
+lin_hamlib_com1_name = ""
+#lin_hamlib_com1_name = "/tmp/QuiskTTY0"
 
+## lin_hamlib_com2_name     CAT serial-2 name, text
+# This is a second serial port for external control of Quisk. Use a different serial port name.
+lin_hamlib_com2_name = ""
+#lin_hamlib_com2_name = "/tmp/QuiskTTY1"
+
+## win_hamlib_com1_name		CAT serial port name, text
+# Enter the name of the serial port that Quisk uses to connect to an external program like N1MM+ or WSJT-X.
+# You must first create a pair of virtual serial ports with a program like vspMgr or HHD Software.
+# Then enter the second name into the other program and specify a radio of type "Flex".  This control method is in addition to the
+# "Hamlib NET rigctl" mechanism which is based on a network connection. Leave this blank
+# to turn off the serial port. The port settings are 9600 baud, 8 bits of data, no parity and one stop bit.
+win_hamlib_com1_name = ""
+#win_hamlib_com1_name = "COM5"
+#win_hamlib_com1_name = "COM6"
+
+## win_hamlib_com2_name     CAT serial-2 name, text
+# This is a second serial port for external control of Quisk. Use a different serial port pair.
+win_hamlib_com2_name = ""
+#win_hamlib_com2_name = "COM15"
+#win_hamlib_com2_name = "COM16"
+
+
+hamlib_com1_name = ""
+hamlib_com2_name = ""
 
 
 ################ Keys
-# You can define two hot keys that when pressed simultaneously, will push the PTT button.
-# If you want only one hot key, set hot_key_ptt2 to None.  Use any of the wx.WXK_* key codes,
-# or the ord() of the letter.  Do not choose hot keys that interfere with other features
-# on your system; for example, system menus or the frequency entry box.
+## hot_key_ptt1		PTT Key 1, keycode
+# Set a keyboard shortcut that will press the PTT button.
+# For a regular key, use the ord() of the key.  For example, ord('a') or ord('b').  For the space bar
+# use ord(' ').  Then restart Quisk.
+# If you do not want a hot key, set this to None.
+# Do not choose a key that interferes with other features
+# on your system such as system menus.
 hot_key_ptt1 = None
-hot_key_ptt2 = None
-#hot_key_ptt1 = wx.WXK_CONTROL
-#hot_key_ptt1 = wx.WXK_SHIFT
-#hot_key_ptt1 = wx.WXK_ALT
+#hot_key_ptt1 = ord(' ')
+#hot_key_ptt1 = ord('z')
+#hot_key_ptt1 = ord('a')
 #hot_key_ptt1 = wx.WXK_F5
-#hot_key_ptt2 = ord(' ')
-#hot_key_ptt2 = ord('A')
 
-# This determines what happens when you tune by dragging the mouse.  The correct
-# choice depends on how your hardware performs tuning.  You may want to use a
-# custom hardware file with a custom ChangeFrequency() method too.
-mouse_tune_method = 0	# The Quisk tune frequency changes and the VFO frequency is unchanged.
-#mouse_tune_method = 1	# The Quisk tune frequency is unchanged and the VFO changes.
-# configurable mouse wheel thanks to DG7MGY
-mouse_wheelmod = 50		# Round frequency when using mouse wheel (50 Hz)
+## hot_key_ptt2		PTT Key 2, keycode
+# If the Control or Shift key must be pressed too, set that key modifier here.
+# Otherwise, set NORMAL here.
+# For example, if you want control-A, set CTRL in "PTT Key 2", and ord('a') in "PTT Key 1".
+hot_key_ptt2 = wx.ACCEL_NORMAL
+#hot_key_ptt2 = wx.ACCEL_CTRL
+#hot_key_ptt2 = wx.ACCEL_SHIFT
+#hot_key_ptt2 = wx.ACCEL_CTRL | wx.ACCEL_SHIFT
+#hot_key_ptt2 = wx.ACCEL_ALT
+
+## hot_key_ptt_toggle	PTT Key Toggle, boolean
+# Set to True if you want PTT to remain on when you release the key.  A second key press will
+# then release PTT.  This is toggle mode.  If False, you must keep pressing the key, and releasing
+# it will release PTT.
+# Changes are immediate (no need to restart).
+hot_key_ptt_toggle = False
+#hot_key_ptt_toggle = True
+
+## hot_key_ptt_if_hidden	PTT Key if Hidden, boolean
+# Set to True if you want PTT to be active when the Quisk window is not visible.
+# Otherwise, the Quisk window must be active and on top.
+hot_key_ptt_if_hidden = False
+#hot_key_ptt_if_hidden = True
 
 
 
@@ -1318,14 +1587,13 @@ else:
   data_poll_usec = 5000		# poll time in microseconds
 
 ## keyupDelay			Keyup delay msecs, integer
-# If you are using keying, key-down throws away the current capture buffer
-# and starts a sidetone with a rise time of 5 milliseconds.  For
-# key-up, the sidetone is ended with a fall time of 5 milliseconds, then
-# a silent period starts, then normal audio starts with a rise time of
-# 5 milliseconds.  The length of the silent period is given by keyupDelay,
-# but will be at least the time necessary to collect enough samples to
-# refill the filters.  A larger keyupDelay may be needed to accomodate
-# antenna switching or other requirement of your hardware.
+# For the Hermes protocol including the Hermes-Lite2, this is the key-up hang time,
+# the time in milliseconds 0 to 1023 to hold the T/R relay after the CW key goes up
+# or the PTT button goes up. For all
+# hardware, it adds a silent period to the audio after key up.
+# A large key up delay may be needed to accomodate
+# antenna switching or other requirements of your hardware.
+# Changes are immediate (no need to restart).
 keyupDelay = 23
 
 ## fft_size_multiplier		FFT size multiplier, integer
@@ -1372,7 +1640,7 @@ use_sidetone = 0
 
 ## add_imd_button			Add IMD button, integer choice
 # If you want Quisk to add a button to generate a 2-tone IMD test signal,
-# set this to 1.  This feature requires the microphone to work.
+# set this to 1.
 add_imd_button = 0
 #add_imd_button = 1
 
@@ -1401,18 +1669,20 @@ freedv_tx_msg = ''
 
 
 # This is the list of FreeDV modes and their index number.  The starting mode is the first listed.
-freedv_modes = (('Mode 1600', 0), ('Mode 700', 1), ('Mode 700B', 2), ('Future 3', 3), ('Future 4', 4))
+freedv_modes = (('Mode 1600', 0), ('Mode 700', 1), ('Mode 700B', 2),
+		# ('Mode 2400A', 3), ('Mode 2400B', 4), ('Mode 800XA', 5),
+		('Mode 700C', 6), ('Mode 700D', 7), ('Mode 2020', 8), ('Future9', 9), ('Future10', 10))
 
 # These are the filter bandwidths for each mode.  Quisk has built-in optimized filters
 # for these values, but you can change them if you want.
 FilterBwCW	= (200, 400, 600, 1000, 1500, 3000)
 FilterBwSSB	= (2000, 2200, 2500, 2800, 3000, 3300)
 FilterBwAM	= (4000, 5000, 6000, 8000, 10000, 9000)
-FilterBwFM	= (8000, 10000, 12000, 15000, 17000, 20000)
+FilterBwFM	= (8000, 10000, 12000, 16000, 18000, 20000)
 FilterBwIMD	= FilterBwSSB
-FilterBwDGT	= (1600, 3200, 4800, 10000, 20000, 20000)
+FilterBwDGT	= (200, 400, 1500, 3200, 4800, 10000)
 FilterBwEXT	= (8000, 10000, 12000, 15000, 17000, 20000)
-FilterBwFDV	= (1200, 1400, 1600, '', '', '')
+FilterBwFDV	= (1500, 2000, 3000, '', '', '')
 
 # If your hardware file defines the method OnButtonPTT(self, event), then Quisk will
 # display a PTT button you can press.  The method must switch your hardware to
@@ -1421,8 +1691,8 @@ FilterBwFDV	= (1200, 1400, 1600, '', '', '')
 ## spot_button_keys_tx			Key Tx on Spot, boolean
 # If you want the Spot button to key the transmitter immediately when you press it, set this option.
 # Your hardware must have a working PTT button for this to work.
-spot_button_keys_tx = False
-#spot_button_keys_tx = True
+spot_button_keys_tx = True
+#spot_button_keys_tx = False
 
 
 
@@ -1484,27 +1754,27 @@ use_unicode_symbols = True
 #use_unicode_symbols = False
 
 # These are the Unicode symbols used in the station window.  Thanks to Christof, DJ4CM.
-Usym_stat_fav = unichr(0x2605)	# Symbol for favorites, a star
-Usym_stat_mem = unichr(0x24C2)	# Symbol for memory stations, an "M" in a circle
-#Usym_stat_dx = unichr(0x2691)	# Symbol for DX Cluster stations, a flag
-Usym_stat_dx = unichr(0x25B2)	# Symbol for DX Cluster stations, a Delta
+Usym_stat_fav = u"\u2605"	# Symbol for favorites, a star
+Usym_stat_mem = u"\u24C2"	# Symbol for memory stations, an "M" in a circle
+#Usym_stat_dx = u"\u2691"	# Symbol for DX Cluster stations, a flag
+Usym_stat_dx = u"\u25B2"	# Symbol for DX Cluster stations, a Delta
 # These are the text symbols used in the station window.
 Tsym_stat_fav = 'F'
 Tsym_stat_mem = 'M'
 Tsym_stat_dx = 'Dx'
 #
 # These are the Unicode symbols to display on buttons.  Thanks to Christof, DJ4CM.
-Ubtn_text_range_dn = unichr(0x2B07)						# Down band, left arrow
-Ubtn_text_range_up = unichr(0x2B06)						# Up band, right arrow
-Ubtn_text_play = unichr(0x25BA)							# Play button
-Ubtn_text_rec = unichr(0x25CF)							# Record button, a filled dot
-Ubtn_text_file_rec = "File " + unichr(0x25CF)           # Record to file
-Ubtn_text_file_play = "File " + unichr(0x25BA)          # Play from file
-Ubtn_text_fav_add    = unichr(0x2605) + unichr(0x2191)  # Add to favorites
-Ubtn_text_fav_recall = unichr(0x2605) + unichr(0x2193)  # Jump to favorites screen
-Ubtn_text_mem_add  = unichr(0x24C2) + unichr(0x2191)    # Add to memory
-Ubtn_text_mem_next = unichr(0x24C2) + unichr(0x27B2)    # Next memory
-Ubtn_text_mem_del  = unichr(0x24C2) + unichr(0x2613)    # Delete from memory
+Ubtn_text_range_dn = u"\u2B07"						# Down band, left arrow
+Ubtn_text_range_up = u"\u2B06"						# Up band, right arrow
+Ubtn_text_play = u"\u25BA"							# Play button
+Ubtn_text_rec = u"\u25CF"							# Record button, a filled dot
+Ubtn_text_file_rec = "File " + u"\u25CF"           # Record to file
+Ubtn_text_file_play = "File " + u"\u25BA"          # Play from file
+Ubtn_text_fav_add    = u"\u2605" + u"\u2191"  # Add to favorites
+Ubtn_text_fav_recall = u"\u2605" + u"\u2193"  # Jump to favorites screen
+Ubtn_text_mem_add  = u"\u24C2" + u"\u2191"    # Add to memory
+Ubtn_text_mem_next = u"\u24C2" + u"\u27B2"    # Next memory
+Ubtn_text_mem_del  = u"\u24C2" + u"\u2613"    # Delete from memory
 # These are the text symbols to display on buttons.
 Tbtn_text_range_dn = "Dn"
 Tbtn_text_range_up = "Up"
@@ -1523,9 +1793,9 @@ Tbtn_text_mem_del  = "Del"
 decorate_buttons = True
 #decorate_buttons = False
 
-btn_text_cycle = unichr(0x21B7)			# Character to display on multi-push buttons
-btn_text_cycle_small = unichr(0x2193)	# Smaller version when there is little space
-btn_text_switch = unichr(0x21C4)		# Character to switch left-right
+btn_text_cycle = u"\u21B7"			# Character to display on multi-push buttons
+btn_text_cycle_small = u"\u2193"	# Smaller version when there is little space
+btn_text_switch = u"\u21C4"		# Character to switch left-right
 
 ## color_scheme				Color scheme, text choice
 # This controls the color scheme used by Quisk.  The default color scheme is A, and you can change this scheme
@@ -1908,6 +2178,18 @@ BandPlan = [
   # 23 centimeters
   [1240000000, Other],
   [1300000000, None],
+  # 13 centimeters
+  [2300000000, Other],
+  [2450000000, None],
+  # 9 centimeters
+  [3300000000, Other],
+  [3500000000, None],
+  # 5 centimeters
+  [5650000000, Other],
+  [5925000000, None],
+  # 3 centimeters
+  [10000000000, Other],
+  [10500000000, None],
   ]
 
 ## BandEdge 	Band Edge, dict
@@ -1927,6 +2209,10 @@ BandEdge = {
     '70cm'  :( 420000000,  450000000),
     '33cm'  :( 902000000,  928000000),
     '23cm'  :(1240000000, 1300000000),
+    '13cm'  :(2300000000, 2450000000),
+    '9cm'   :(3300000000, 3500000000),
+    '5cm'   :(5650000000, 5925000000),
+    '3cm'  :(10000000000,10500000000),
 	}
 
 # For the Time band, this is the center frequency, tuning frequency and mode:
@@ -1949,6 +2235,12 @@ bandTime = [
 bandLabels = [
 	'Audio', '160', '80', ('60',) * 5, '40', '30', '20', '17',
 	'15', '12', '10', ('Time',) * len(bandTime)]
+
+# This is a dictionary of shortcut keys for each band. If you do not want a shortcut, use ''. The shortcut
+# character will be underlined in the label if present.
+bandShortcuts = {'Audio':'', '160':'1', '80':'8', '60':'6', '40':'4', '30':'3', '20':'2', '17':'7',
+	'15':'5', '12':'1', '10':'0', 'Time':'e', '6':'6', '4':'4', '2':'2', '1.25':'5', '70cm':'7',
+	'33cm':'3', '23cm':'', '13cm':'', '9cm':'', '5cm':'', '3cm':''}
 
 ## bandTransverterOffset	Transverter Offset, dict
 # If you use a transverter, you need to tune your hardware to a frequency lower than
@@ -1973,10 +2265,11 @@ bandState = {'Audio':(0, 0, 'LSB'),
       '160':( 1890000, -10000, 'LSB'), '80' :( 3660000, -10000, 'LSB'),
       '60' :( 5370000,   1500, 'USB'), '40' :( 7180000, -5000, 'LSB'),  '30':(10120000, -10000, 'CWL'),
       'Time':( 5000000, 0, 'AM')}
-for band, (f1, f2) in BandEdge.items():
+for band in BandEdge:
+  f1, f2 = BandEdge[band]
   if f1 > 13500000:
-    f = (f1 + f2) / 2
-    f = (f + 5000) / 10000
+    f = (f1 + f2) // 2
+    f = (f + 5000) // 10000
     f *= 10000
     bandState[band] = (f, 10000, 'USB')
 # Select the method to test the state of the key; see is_key_down.c
@@ -1996,4 +2289,10 @@ persistent_state = True
 default_mode = 'USB'
 # If you use a soundcard with Ethernet control of the VFO, set these parameters:
 rx_ip = ""							# Receiver IP address for VFO control
-
+# This determines what happens when you tune by dragging the mouse.  The correct
+# choice depends on how your hardware performs tuning.  You may want to use a
+# custom hardware file with a custom ChangeFrequency() method too.
+mouse_tune_method = 0	# The Quisk tune frequency changes and the VFO frequency is unchanged.
+#mouse_tune_method = 1	# The Quisk tune frequency is unchanged and the VFO changes.
+# configurable mouse wheel thanks to DG7MGY
+mouse_wheelmod = 50		# Round frequency when using mouse wheel (50 Hz)

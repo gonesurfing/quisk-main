@@ -26,14 +26,14 @@ static int bufferz[SAMP_BUFFER_SIZE];				// Buffer for zero samples
 static double mic_playbuf_util = 0.70;		// Current mic play buffer utilization 0.0 to 1.0
 
 int quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
-{	// Read sound samples from the ALSA soundcard.
+{	// cSamples can be NULL to discard samples.
+	// Read sound samples from the ALSA soundcard.
 	// Samples are converted to 32 bits with a range of +/- CLIP32 and placed into cSamples.
 	int i;
-	snd_pcm_sframes_t frames, avail;
+	snd_pcm_sframes_t frames, delay, avail;
 	short si, sq;
 	int ii, qq;
 	int nSamples;
-	complex double c;
 
 	if (!dev->handle)
 		return -1;
@@ -56,21 +56,33 @@ int quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
 		break;
 	}
 
-	snd_pcm_delay(dev->handle, &avail);	// available frames
-	dev->dev_latency = avail;
+	if (snd_pcm_avail_delay(dev->handle, &avail, &delay) >= 0) {
+		dev->dev_latency = avail + delay;	// avail frames can be read plus delay frames digitized but can't be read yet
+	}
+	else {
+		avail = 32;
+		dev->dev_latency = 0;
+		dev->dev_error++;
+#if DEBUG_IO
+		QuiskPrintTime("read_alsa: snd_pcm_avail_delay failed", 0);
+#endif
+	}
 	if (dev->read_frames == 0) {		// non-blocking: read available frames
-		if (avail == 0)
+		if (avail < 32)
 			avail = 32;	// read frames to restart from error
-		if (avail > SAMP_BUFFER_SIZE / dev->num_channels)		// limit read request to buffer size
-			avail = SAMP_BUFFER_SIZE / dev->num_channels;
 	}
 	else {
 		avail = dev->read_frames;	// size of read request
 	}
+	i = SAMP_BUFFER_SIZE * 8 / 10 / dev->num_channels;	// limit read request to buffer size
+	if (avail > i)
+		avail = i;
 	nSamples = 0;
 	switch (dev->sample_bytes) {
 	case 2:
 		frames = snd_pcm_readi (dev->handle, buffer2, avail);	// read samples
+		if ( ! cSamples)
+			return 0;
 		if (frames == -EAGAIN) {	// no samples available
 			break;
 		}
@@ -83,7 +95,7 @@ int quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
 			snd_pcm_start (dev->handle);
 			break;
 		}
-		for (i = 0; frames; i += dev->num_channels, nSamples++, frames--) {
+		for (i = 0; frames; i += dev->num_channels, frames--) {
 			si = buffer2[i + dev->channel_I];
 			sq = buffer2[i + dev->channel_Q];
 			if (si >=  CLIP16 || si <= -CLIP16)
@@ -93,10 +105,13 @@ int quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
 			ii = si << 16;
 			qq = sq << 16;
 			cSamples[nSamples] = ii + I * qq;
+			nSamples++;
 		}
 		break;
 	case 3:
 		frames = snd_pcm_readi (dev->handle, buffer3, avail);	// read samples
+		if ( ! cSamples)
+			return 0;
 		if (frames == -EAGAIN) {	// no samples available
 			break;
 		}
@@ -109,7 +124,7 @@ int quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
 			snd_pcm_start (dev->handle);
 			break;
 		}
-		for (i = 0; frames; i += dev->num_channels, nSamples++, frames--) {
+		for (i = 0; frames; i += dev->num_channels, frames--) {
 			ii = qq = 0;
 			if (!is_little_endian) {	// convert to big-endian
 				*((unsigned char *)&ii    ) = buffer3[(i + dev->channel_I) * 3 + 2];
@@ -128,10 +143,13 @@ int quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
 			if (qq >=  CLIP32 || qq <= -CLIP32)
 				dev->overrange++;
 			cSamples[nSamples] = ii + I * qq;
+			nSamples++;
 		}
 		break;
 	case 4:
 		frames = snd_pcm_readi (dev->handle, buffer4, avail);	// read samples
+		if ( ! cSamples)
+			return 0;
 		if (frames == -EAGAIN) {	// no samples available
 			break;
 		}
@@ -144,7 +162,7 @@ int quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
 			snd_pcm_start (dev->handle);
 			break;
 		}
-		for (i = 0; frames; i += dev->num_channels, nSamples++, frames--) {
+		for (i = 0; frames; i += dev->num_channels, frames--) {
 			ii = buffer4[i + dev->channel_I];
 			qq = buffer4[i + dev->channel_Q];
 			if (ii >=  CLIP32 || ii <= -CLIP32)
@@ -152,8 +170,11 @@ int quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
 			if (qq >=  CLIP32 || qq <= -CLIP32)
 				dev->overrange++;
 			cSamples[nSamples] = ii + I * qq;
+			nSamples++;
 		}
 		break;
+	default:
+		return 0;
 	}
 #if CORRECT_PLAY_RATE
 	if ( ! strcmp(dev->stream_description, "Microphone Input")) {
@@ -163,7 +184,7 @@ int quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
 			printf("read_alsa %s: Remove a mic sample, util %.2lf\n", dev->stream_description, mic_playbuf_util);
 #endif
 		}
-		else if(mic_playbuf_util < 0.55 && nSamples >= 2) {	// Add a sample
+		else if(cSamples && mic_playbuf_util < 0.55 && nSamples >= 2) {	// Add a sample
 			cSamples[nSamples] = cSamples[nSamples - 1];
 			cSamples[nSamples - 1] = (cSamples[nSamples - 2] + cSamples[nSamples]) / 2.0;
 			nSamples++;
@@ -173,11 +194,6 @@ int quisk_read_alsa(struct sound_dev * dev, complex double * cSamples)
 		}
 	}
 #endif
-	for (i = 0; i < nSamples; i++) {	// DC removal; R.G. Lyons page 553
-		c = cSamples[i] + dev->dc_remove * 0.95;
-		cSamples[i] = c - dev->dc_remove;
-		dev->dc_remove = c;
-	}
 	return nSamples;
 }
 
@@ -197,6 +213,7 @@ void quisk_play_alsa(struct sound_dev * playdev, int nSamples,
 // arbitrary sample rates.  It seems to be confused by the rate conversion.  So we
 // are changing rates (decimate) ourselves.
 //
+	delay = 0;
 	switch(snd_pcm_state(playdev->handle)) {
 	case SND_PCM_STATE_RUNNING:
 		//printf("State RUNNING\n");
@@ -217,20 +234,18 @@ void quisk_play_alsa(struct sound_dev * playdev, int nSamples,
 		quisk_sound_state.underrun_error++;
 		playdev->dev_underrun++;
 		snd_pcm_prepare(playdev->handle);
-		delay = 0;
 		break;
 	default:
 #if DEBUG_IO
 		QuiskPrintTime("play_alsa: State UNKNOWN", 0);
 #endif
-		delay = 0;
 		break;
 	}
 	playdev->dev_latency = delay;
 	if (report_latency) {		// Report for main playback device
 		quisk_sound_state.latencyPlay = delay;		// samples left in play buffer
 	}
-	if ( ! strcmp(playdev->stream_description, "IQ Output")) {
+	if ( ! strcmp(playdev->stream_description, "I/Q Tx Sample Output")) {
 		mic_playbuf_util = (double)(nSamples + delay) / playdev->latency_frames;
 	}
 	// There will be additional samples available to read in the capture buffer.
@@ -336,8 +351,8 @@ void quisk_play_alsa(struct sound_dev * playdev, int nSamples,
 					buffer3[(i + playdev->channel_Q) * 3 + 2] = *((unsigned char *)&qq    );
 				}
 				else {	// convert to little-endian
-					memcpy(buffer3 + (i + playdev->channel_I) * 3, (unsigned char *)&ii + 1, 3);
-					memcpy(buffer3 + (i + playdev->channel_Q) * 3, (unsigned char *)&qq + 1, 3);
+					memcpy(buffer3 + (i + playdev->channel_I) * 3, (unsigned char *)&ii, 3);
+					memcpy(buffer3 + (i + playdev->channel_Q) * 3, (unsigned char *)&qq, 3);
 				}
 			}
 			n = n - index;
@@ -546,9 +561,10 @@ static snd_pcm_format_t check_formats(struct sound_dev * dev, snd_pcm_hw_params_
 
 static int quisk_open_alsa_capture(struct sound_dev * dev)
 {	// Open the ALSA soundcard for capture.  Return non-zero for error.
-	int err, dir, sample_rate;
+	int i, err, dir, sample_rate, mode;
 	int poll_size;
 	unsigned int ui;
+	char buf[QUISK_SC_SIZE];
 	snd_pcm_hw_params_t *hware;
 	snd_pcm_sw_params_t *sware;
 	snd_pcm_uframes_t frames;
@@ -560,17 +576,25 @@ static int quisk_open_alsa_capture(struct sound_dev * dev)
 #if DEBUG_IO
 	printf("*** Capture on alsa device %s\n", dev->name);
 #endif
-	if ( ! strncmp (dev->name, "alsa:", 5)) {	// search for the name in info strings
-		char buf[QUISK_SC_SIZE];
+	if (dev->read_frames == 0)
+		mode = SND_PCM_NONBLOCK;
+	else
+		mode = 0;
+	if ( ! strncmp (dev->name, "alsa:", 5)) {	// search for the name in info strings, put device name into buf
 		strncpy(buf, dev->name + 5, QUISK_SC_SIZE);
 		device_list(NULL, SND_PCM_STREAM_CAPTURE, buf);
-		err = snd_pcm_open (&handle, buf, SND_PCM_STREAM_CAPTURE, 0);
 	}
 	else {		// just try to open the name
-		err = snd_pcm_open (&handle, dev->name, SND_PCM_STREAM_CAPTURE, 0);
+		strncpy(buf, dev->name, QUISK_SC_SIZE);
+	}
+	for (i = 0; i < 6; i++) {	// try a few times in case the device is busy
+		err = snd_pcm_open (&handle, buf, SND_PCM_STREAM_CAPTURE, mode);
+		if (err >= 0)
+			break;
+		QuiskSleepMicrosec(500000);
 	}
 	if (err < 0) {
-		snprintf(quisk_sound_state.err_msg, QUISK_SC_SIZE, "Cannot open capture device %s (%s)",
+		snprintf(quisk_sound_state.err_msg, QUISK_SC_SIZE, "Cannot open capture device %.40s (%.40s)",
 				dev->name, snd_strerror (err));
 		return 1;
 	}
@@ -692,8 +716,9 @@ errend:
 
 static int quisk_open_alsa_playback(struct sound_dev * dev)
 {	// Open the ALSA soundcard for playback.  Return non-zero on error.
-	int err, dir, sample_rate;
+	int i, err, dir, sample_rate, mode;
 	unsigned int ui;
+	char buf[QUISK_SC_SIZE];
 	snd_pcm_hw_params_t *hware;
 	snd_pcm_sw_params_t *sware;
 	snd_pcm_uframes_t frames;
@@ -706,17 +731,25 @@ static int quisk_open_alsa_playback(struct sound_dev * dev)
 	printf("*** Playback on alsa device %s\n", dev->name);
 	printf("quisk_open_alsa_playback(): %s\n", dev->stream_description);
 #endif
-	if ( ! strncmp (dev->name, "alsa:", 5)) {	// search for the name in info strings
-		char buf[QUISK_SC_SIZE];
+	if (dev->read_frames == 0)
+		mode = SND_PCM_NONBLOCK;
+	else
+		mode = 0;
+	if ( ! strncmp (dev->name, "alsa:", 5)) {	// search for the name in info strings, put device name into buf
 		strncpy(buf, dev->name + 5, QUISK_SC_SIZE);
 		device_list(NULL, SND_PCM_STREAM_PLAYBACK, buf);
-		err = snd_pcm_open (&handle, buf, SND_PCM_STREAM_PLAYBACK, 0);
 	}
 	else {		// just try to open the name
-		err = snd_pcm_open (&handle, dev->name, SND_PCM_STREAM_PLAYBACK, 0);
+		strncpy(buf, dev->name, QUISK_SC_SIZE);
+	}
+	for (i = 0; i < 6; i++) {	// try a few times in case the device is busy
+		err = snd_pcm_open (&handle, buf, SND_PCM_STREAM_PLAYBACK, mode);
+		if (err >= 0)
+			break;
+		QuiskSleepMicrosec(500000);
 	}
 	if (err < 0) {
-		snprintf (quisk_sound_state.err_msg, QUISK_SC_SIZE, "Cannot open playback device %s (%s)\n",
+		snprintf (quisk_sound_state.err_msg, QUISK_SC_SIZE, "Cannot open playback device %.40s (%.40s)\n",
 				dev->name, snd_strerror (err));
 		return 1;
 	}

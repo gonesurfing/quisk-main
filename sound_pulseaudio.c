@@ -112,7 +112,7 @@ void stream_state_callback(pa_stream *s, void *userdata) {
         case PA_STREAM_FAILED:
         default:
 	    snprintf(quisk_sound_state.err_msg, QUISK_SC_SIZE,
-		"Stream error: %s - %s", dev->name, pa_strerror(pa_context_errno(pa_stream_get_context(s))));
+		"Stream error: %.40s - %.40s", dev->name, pa_strerror(pa_context_errno(pa_stream_get_context(s))));
 	    if (quisk_sound_state.verbose_pulse)
 		printf("\n**Stream %s state Failed\n", dev->name);
             printf("%s\n", quisk_sound_state.err_msg);
@@ -323,7 +323,7 @@ void state_cb(pa_context *c, void *userdata) {
             break;
         case PA_CONTEXT_FAILED:
         case PA_CONTEXT_TERMINATED:
-            printf("Context Terminated");
+            printf("Context Terminated\n");
             break;
         case PA_CONTEXT_READY: {
             pa_operation *o;
@@ -429,7 +429,8 @@ static void WaitForPoll(void) {		// Implement a blocking read
  * and returned via cSamples pointer.
  * Returns the number of samples placed into cSamples
  */
-int quisk_read_pulseaudio(struct sound_dev *dev, complex double *cSamples) {
+int quisk_read_pulseaudio(struct sound_dev *dev, complex double *cSamples)
+{ // cSamples can be NULL to discard samples
     int i, nSamples;
     int read_frames;		// A frame is a sample from each channel
     const void * fbuffer;
@@ -490,7 +491,7 @@ int quisk_read_pulseaudio(struct sound_dev *dev, complex double *cSamples) {
            continue;
        }
        
-       if (nSamples * dev->num_channels * dev->sample_bytes + read_bytes >= SAMP_BUFFER_SIZE) {
+       if (nSamples * dev->num_channels * dev->sample_bytes + read_bytes >= SAMP_BUFFER_SIZE * 8 / 10) {
            if (quisk_sound_state.verbose_pulse)
                printf("buffer full on %s\n", dev->name);
            pa_stream_drop(s);		// limit read request to buffer size
@@ -508,7 +509,9 @@ int quisk_read_pulseaudio(struct sound_dev *dev, complex double *cSamples) {
                    dev->overrange++;
                if (fq >=  1.0 || fq <= -1.0)
                    dev->overrange++;
-               cSamples[nSamples++] = (fi + I * fq) * CLIP32;
+               if (cSamples)
+                   cSamples[nSamples] = (fi + I * fq) * CLIP32;
+               nSamples++;
            }
        }
        
@@ -523,7 +526,9 @@ int quisk_read_pulseaudio(struct sound_dev *dev, complex double *cSamples) {
                    dev->overrange++;
                int ii = si << 16;
                int qq = sq << 16;
-               cSamples[nSamples++] = ii + I * qq;
+               if (cSamples)
+                   cSamples[nSamples] = ii + I * qq;
+               nSamples++;
            }
        }
        
@@ -533,14 +538,6 @@ int quisk_read_pulseaudio(struct sound_dev *dev, complex double *cSamples) {
        pa_stream_drop(s);
     }
     pa_threaded_mainloop_unlock(pa_ml);
-   
-    // DC removal; R.G. Lyons page 553
-    complex double c;
-    for (i = 0; i < nSamples; i++) {
-        c = cSamples[i] + dev->dc_remove * 0.95;
-        cSamples[i] = c - dev->dc_remove;
-        dev->dc_remove = c;
-    }
     return nSamples;
 }
 

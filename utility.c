@@ -70,15 +70,31 @@ double QuiskGetConfigDouble(const char * name, double deflt)
 }
 
 char * QuiskGetConfigString(const char * name, char * deflt)
-{  // return deflt for failure.
+{  // Return the UTF-8 configuration string. Return deflt for failure.
   char * res;
-  PyObject * attr;  
+  PyObject * attr;
+#if PY_MAJOR_VERSION < 3
+  static char retbuf[QUISK_SC_SIZE];
+#endif
 
   if (!quisk_pyConfig || PyErr_Occurred())
     return deflt;
   attr = PyObject_GetAttrString(quisk_pyConfig, name);
   if (attr) {
-    res = PyString_AsString(attr);
+#if PY_MAJOR_VERSION >= 3
+    res = (char *)PyUnicode_AsUTF8(attr);
+#else
+    if (PyUnicode_Check(attr)) {
+      PyObject * pystr = PyUnicode_AsUTF8String(attr);
+      strncpy(retbuf, PyString_AsString(pystr), QUISK_SC_SIZE);
+      retbuf[QUISK_SC_SIZE - 1] = 0;
+      res = retbuf;
+      Py_DECREF(pystr);
+    }
+    else {
+      res = PyString_AsString(attr);
+    }
+#endif
     Py_DECREF(attr);
     if (res)
       return res;		// success
@@ -107,6 +123,33 @@ double QuiskTimeSec(void)
 	gettimeofday(&tv, NULL);
 	return (double)tv.tv_sec + tv.tv_usec * 1e-6;
 #endif
+}
+
+int QuiskDeltaMsec(int timer)
+{  // return the number of milliseconds since the last call for the timer.
+   // There are two timers. The "timer" is either 0 or 1. Call first and throw away the result.
+	static long long time0[2] = {0, 0};
+	long long now;
+	int delta;
+#ifdef MS_WINDOWS
+	now = GetTickCount();	// This overflows after 49.7 days
+#else
+	struct timespec ts;
+#ifdef CLOCK_MONOTONIC_RAW
+	if (clock_gettime(CLOCK_MONOTONIC_RAW, &ts) != 0)
+#else
+	if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+#endif
+		return 0;
+	now = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+#endif
+	if (timer < 0 || timer >= 2)
+		return 0;
+	if (now < time0[timer])
+		now = time0[timer] = 0;
+	delta = (int)(now - time0[timer]);
+	time0[timer] = now;
+	return delta;
 }
 
 void QuiskPrintTime(const char * str, int index)

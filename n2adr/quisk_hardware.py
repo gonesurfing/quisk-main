@@ -2,6 +2,10 @@
 # The files to control my 2010 transceiver and for the improved version HiQSDR
 # are in the package directory HiQSDR.
 
+from __future__ import print_function
+from __future__ import absolute_import
+from __future__ import division
+
 from hiqsdr.quisk_hardware import Hardware as BaseHw
 from n2adr import station_hardware
 

@@ -1,3 +1,4 @@
+from __future__ import absolute_import
 # Please do not change this hardware control module for Quisk.  Instead copy
 # it to your own quisk_hardware.py and make changes there.
 # See quisk_hardware_model.py for documentation.
@@ -11,12 +12,10 @@
 
 import time
 import _quisk as QS
-from sdriqpkg import sdriq
 import serial			# From the pyserial package
 
 # Use the SDR-IQ hardware as the base class
-from sdriqpkg import quisk_hardware as SdriqHardware
-BaseHardware = SdriqHardware.Hardware
+from quisk_hardware_sdriq import Hardware as BaseHardware
 
 class Hardware(BaseHardware):
   def __init__(self, app, conf):
@@ -36,7 +35,7 @@ class Hardware(BaseHardware):
     # But this is not currently implemented.
     QS.invert_spectrum(1)
     t = BaseHardware.open(self)		# save the message
-    sdriq.freq_sdriq(10700000)
+    BaseHardware.ChangeFrequency(10700000, 10700000)
     return t
   def close(self):
     BaseHardware.close(self)

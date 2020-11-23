@@ -1,3 +1,362 @@
+Quisk Version 4.1.57  May 2020
+==============================
+This is a bug fix release. I fixed a bug in the small screen version. I fixed an incompatibility
+with the latest wxPython version 4.1.0. I added a patch from Dave Roberts to close FreeDV properly.
+Thanks Dave!
+
+Quisk Version 4.1.56  April 2020
+================================
+For Linux, if the file /usr/include/portaudio.h is absent, portaudio will not be included in Quisk.
+This change makes portaudio optional. The change was needed because portaudio breaks wine. Quisk now
+restores the correct frequency for the 60 meter band. There were some other bug fixes.
+
+Quisk Version 4.1.55  April 2020
+================================
+The new Sdr Micron radio was missing from the Windows version of Quisk. There are reports that the item
+Hermes_BandDictTx is damaged in the quisk_settings.json file. Quisk will now fix this itself. The item is
+the "Tx IO Bus" on the Hermes Bands configuration screen.
+
+Quisk Version 4.1.54  March 2020
+================================
+There are now two new radios available in Quisk. David Fainitski contributed code for the Sdr Micron,
+and Andrea Montefusco IW0HDV contributed code for the Perseus SDR. The radios should appear on the
+list of supported radios in Config/Radios screen. Check the Config/radio/Hardware screen to see if you
+need any more options. Please test these radios to make sure everything is working.
+
+I added a general way to add new radios to the configuration screens. See docs.html under Custom Hardware.
+
+Quisk Version 4.1.53  March 2020
+================================
+I changed the Afedri radio module to be compatible with Python3. The graph Zoom feature now is available
+on the Bandscope screen. Vladimyr Burdeiny provided a patch to make dx cluster work with Python 3.
+
+I extended the range of the Waterfall color controls Ys and Yz to accommodate hardware with a higher
+noise floor such as PlutoSDR. You will have to readjust your waterfall colors.
+
+I added a hardware setting for the LNA gain during transmit for the HL2. I made some changes to the CW
+and PTT hardware interface for the HL2. These work great with the HL2, but test the new code if you have
+different Hermes hardware such as Red Pitaya.
+
+Quisk Version 4.1.52  December 2019
+===================================
+I added an On/Off button to Quisk. When Quisk starts the button is "On". When you turn it to "Off",
+Quisk shuts down the sound system and closes the hardware. When you turn it "On" again, Quisk starts
+with any new setting made from the Config screens. This provides a way to start Quisk with changed settings,
+and to re-start your hardware after a power down.
+
+Martin Schaller found and fixed a bug in the Alsa sound system that produced sporadic crashes. Thanks Martin!
+Max, G7UOZ, found and fixed a bug in the Python3 SoftRock hardware_net.py code. Thanks Max!
+This Quisk includes a more recent FreeDV library in both 32-bit and 64-bit versions. The Windows
+SoapySDR interface still requires 64-bit Quisk.
+
+The Config/Status screen now shows the dB level of each open sound device. The maximum level is zero dB.
+This is meant as an aid to configuring the sound devices.
+
+Quisk Version 4.1.51  November 2019
+===================================
+I fixed a bug in the "small screen" code when using the new wx version 4. Thanks to Martin Schaller for
+pointing out that underflows from the Soapy sample source should not count as errors.
+
+This version fixes the Linux installation errors "ImportError: No module named _quisk". It also provides
+a way to run either Python2 or Python3 quisk when both are installed. To do that use "python2 -m quisk"
+or "python3 -m quisk".
+
+The new installation instructions are here: http://james.ahlstrom.name/quisk/docs.html#Installation
+
+Quisk Version 4.1.50  November 2019
+===================================
+Thanks to Martin Schaller for fixing a bug in the SoftRock Tx sound level. I fixed a bug in the HermesLite
+gateware program button traceback.
+
+This Quisk provides pre-built binaries for the Windows Python3 versions. There are now four Windows versions:
+Python2 and Python3, each for either 32 or 64-bit Python. If you have a recent Python3, just run your Python3
+and use pip to install Quisk. Pip will detect the version of Python you are using, and will install the
+correct version of Quisk. If you want to try Python3, install the latest 64-bit version.
+The installation instructions are here: http://james.ahlstrom.name/quisk/docs.html#Installation
+
+Quisk Version 4.1.49  November 2019
+===================================
+Quisk can now program the Hermes Gateware (FPGA flash) over Ethernet. See the button on the radio Hardware screen.
+I fixed some more Python 3 bugs.
+
+Quisk Version 4.1.48  November 2019
+===================================
+I fixed some more problems with the Python3 version of Quisk. I added support for reading and writing the
+EEPROM in the HermesLite. Reading the EEPROM requires code version 68 or newer. The EEPROM settings are on
+the radio Hardware screen.
+
+Quisk Version 4.1.47  October 2019
+==================================
+This is a bug fix release. I fixed a problem with the Python 3 version of Quisk saving program state. I
+fixed a sound device name problem on Windows.  I added some code provided by Steve to support the HermesLite.
+
+Quisk Version 4.1.46  October 2019
+==================================
+When using the bandscope screen the band buttons no longer reset the frequency and mode. Try it.
+Thanks to Ed, GM3SBC, for changes to the hot key PTT logic. The hot key now works better, and is disabled
+when using the config screens.  I changed the FM repeater offset code to increase the level of the CTCSS tone.
+
+I made further progress on Python3 and fixed some resultant problems on Python2. The objective 
+is to have a Quisk that runs the same on Python3 as Python2 so you can use either Python. Linux users
+can test the Python 3 version by entering "make quisk3" followed by "python3 quisk.py".
+
+Quisk Version 4.1.45  September 2019
+====================================
+I added a config screen hardware option "Hermes known IP". If you know the IP address of the Hermes
+hardware, enter it here. Otherwise Quisk will search for the hardware using the usual broadcast method.
+
+The Python Rx samples interface can now accept bandscope data, that is, raw samples from the ADC. See
+the file quisk_hardware_model.py for documentation. I fixed a bug in the bandscope that added noise.
+
+Quisk Version 4.1.44  September 2019
+====================================
+I made some improvements to the Python Rx sample interface. See quisk_hardware_model.py for the
+new interface. I removed the duplicate decimation rates from the SDR-IQ hardware screen.
+There are a number of changes to make Quisk run on Python 3, although this is not finished yet.
+
+Quisk Version 4.1.43  August 2019
+=================================
+This release fixes a bug that resulted in calling the hardware HeartBeat() method too frequently.
+This caused flickering of the HermesLite temperature reading.
+
+Quisk Version 4.1.42  August 2019
+=================================
+I improved the SoftRock amplitude/phase correct screen. I fixed a bug in the Hamlib extended commands
+thanks to James, KE4MIQ.
+
+I added an interface to provide Rx samples to Quisk directly from the Python hardware file. Many new SDR
+hardware devices return samples by Ethernet, USB or a serial port. Since Python has these three interfaces,
+it may be possible to add a new hardware device to Quisk by using Python alone. This is much easier than
+adding C code to Quisk. This work was inspired by David, N7DDC, an avid SDR hardware designer.
+
+I am using the new interface to support the SDR-IQ by RfSpace. Change your hardware file to
+quisk_hardware_sdriq.py instead of the sdriqpkg directory to use the new logic. The sdriqpkg
+directory will be removed in a future release.
+
+Quisk Version 4.1.41  June 2019
+===============================
+I added Steve's code for the Hermes Lite 2 that moves the harmonics of the switching power supplies
+out of the amateur bands. Thanks Steve! I renamed sound devices to have consistent names on all screens.
+Stephen Hurd contributed changes to the SDR-IQ module and the Quisk widgets module. Thanks Stephen!
+I made the configuration screens for the radios more efficient.  I may have fixed the last of the bugs.
+Please test.
+
+Quisk Version 4.1.40  June 2019
+===============================
+This is a bug fix release for assorted problems.  The filter bandwidth is now saved for program start.
+I fixed a buffer overflow in the DirectX code.  I added "Digital output level" to the Config/Sound screen.
+
+I was not able to duplicate a burst of Tx noise when switching to digital modes. But I added code
+to fix it anyway.  Please test.
+
+I was not able to duplicate the problem that the Spot output frequency is correct, but the audio is
+always transmitted at the center frequency instead of the tuning frequency. Please re-test with this
+release, and if it is not fixed I will try again.
+
+Quisk Version 4.1.39  May 2019
+==============================
+I fixed a bug in the VNA program quisk_vna.py.  The Windows version of SoapySDR is compiled
+against SoapySDR version 0.8.0.
+
+Quisk Version 4.1.38  April 2019
+================================
+The bandwidth of the DC removal filter on the Config/radio/Options screen now applies to all sample
+sources, not just sound cards. This is useful to set the bandwidth for SoapySDR devices. For
+Hermes Lite, set the bandwidth to zero or one.
+
+I added Rx and Tx sample rate and bandwidth to the SoapySDR hardware screen. Any value can be entered,
+not just the values from a list. See the latest SoapySDR news at http://james.ahlstrom.name/quisk/soapy.html.
+
+Quisk Version 4.1.37  April 2019
+================================
+I added another broadcast address to the Hermes code to fix a network problem. I added an option to
+the radio Options config screen to reverse the sideband on Tx. This is needed for satellite operation.
+I added the 13, 9, 5 and 3cm bands to the list. I added the additional samples rates 50, 100, 250,
+500 and 1250 ksps to accommodate the RedPitaya. The frequency entry box now clears its entry with
+each use. You can now specify the bandwidth of the SoftRock DC removal filter on the radio Options screen.
+
+I added some of the SoapySDR transmit parameters on the radio screen. But I am having trouble making
+transmit actually work. So transmit is disabled for now.
+
+Quisk Version 4.1.36  March 2019
+================================
+I added a patch by Franco Spinelli, IW2DHW, to add chk_vfo to the Hamlib control for WSJT-X.
+There are further improvements to the SoapySDR radios. I added three Rx gain setting methods
+and automatic DC correction. You will need to re-read the SoapySDR device. Just use the
+"Change.." button and leave the device name unchanged. This is necessary to read additional
+device parameters from the hardware.
+
+Quisk Version 4.1.35  February 2019
+===================================
+I added the Tx Level to the bands config screen for the Red Pitaya. Now you can set the power level
+for each band. I changed the Hermes Lite networking so it works with Virtual Box and multiple
+network interfaces. Please test.
+
+I am starting to add SoapySDR support to Quisk. See http://james.ahlstrom.name/quisk/soapy.html.
+
+Quisk Version 4.1.34  January 2019
+==================================
+This fixes a bug in version 4.1.33 that caused a traceback for b_test1 when using the Small Screen
+layout. I also added support for Afedri hardware. Just use the Config/Radios screen and add
+a radio of type Afedri.
+
+Quisk Version 4.1.33  January 2019
+==================================
+I improved the output level control for digital modes. This removes the lag in attaining 100%
+level. For the first transmit, Quisk does not know what level to expect from the external digital
+source, so there may still be a small delay.
+
+I added a squelch feature that works for SSB and FM. Just push the "Squelch" button. The SSB level
+automatically adjusts for band noise, and the default slider value of 0.200 should be close to
+what you want.
+
+Quisk Version 4.1.32  January 2019
+==================================
+I corrected some button colors and colors on the config screens. The green Rx line is now centered
+in the filter for Split mode.
+
+Quisk used to leave some headroom in the 16-bit samples it sends to the hardware. The maximum level
+used to be about 70%. I changed the maximum level to 100%. So the PEP output for all modes will be
+the same level as 100% Spot output. But remember that the PEP level is 100%, not the average level.
+An average reading power meter will show a level much below PEP for SSB and digital modes.
+
+There is a new tuning method available. If the Shift key is held down when you left-click the graph,
+the Rx filter is centered at that frequency. Normally the Tx frequency is set at the frequency.
+This is useful when using narrow digital filters. It can also be used for SSB.
+
+Quisk Version 4.1.31  December 2018
+===================================
+When using N1MM+, I removed the 10 kHz frequency shift when adjusting frequency. The center will now
+shift only if the external frequency control gets within 10% of the left or right edge. Then the
+frequency is re-centered.
+
+I fixed the new Windows version handling of Latin-1 accented characters. I added a new "Filters" page
+to the Config Radio screens for the Hermes Protocol Alex high pass and low pass filters.
+
+Quisk Version 4.1.30  December 2018
+===================================
+The Windows installation procedure is different. If you have an old Quisk installed, you should use
+the Windows Apps screen to uninstall it. Then install Quisk using Python "pip". See the downloads page
+and the new documentation. The new installation method is compatible with standard Python setup tools.
+The Linux installation procedure is also different.
+
+I removed the "pyusb" module from Quisk. You will need to install the public version if you need it.
+The inclusion interfered with the public version. See the downloads page and the new documentation.
+I fixed a bug that happens with multiple displays. The zoom feature now centers in the Rx passband.
+This is useful for narrow digital modes.
+
+There are a lot of changes in this version, and the installation method is new, as is the 64-bit
+Windows version. If you have any problems or suggestions, please post to the usual groups.
+
+Quisk Version 4.1.26  November 2018
+===================================
+I added some narrow filters to the digital modes DGT-U and DGT-L. The narrow filters are
+centered at 1500 Hertz. This makes filtering in the digital program easier, and is
+useful for RTTY. As part of this project I rewrote the filter display logic. Filters are now
+more accurately shown, and include the effect of RIT.
+
+The keyup delay on the radio Timing screen used to affect only the CW key. It now works with
+the PTT button too.
+
+Quisk Version 4.1.25  October 2018
+==================================
+I added the option of Quisk CAT control by a software serial port to accommodate N1MM+ logging software.
+Set the N1MM radio to "Flex", and enter the port name on the Quisk Config/radio/Remote screen.
+You need a "Virtual Serial Port" (VSP) pair. One side connects to Quisk and the other to N1MM.
+For Linux, Quisk can set up these ports itself. Pick a port name like "/tmp/QuiskTTY0" on the
+Config/radio/Remote screen and enter that name in the external program.  On Windows
+you need a VSP that is set up by an external program. This is like the "Virtual Audio Cable"
+needed for samples. An Internet search will turn up HDD Software, Eltima Software and many others.
+Set up a port pair, and enter one name on the Quisk Remote screen, and the other name in N1MM.
+Not all of the "Flex" commands are implemented. If you get any error messages, send them to me.
+
+I moved the split Rx/Tx play menu from the config screen to the Split button so it is easier to change.
+I added code from Steve Haynal to control the VersaClock on the Hermes-Lite2.
+
+Quisk Version 4.1.24  October 2018
+==================================
+I changed the sound logic so that a mic device is no longer needed for digital modes or Spot. The mic
+is only needed for voice communications. I added a requested feature to the Config/radio/Keys screen.
+I improved the operation on the Raspberry Pi.
+
+Quisk Version 4.1.23  September 2018
+====================================
+I fixed some more problems with the new Ubuntu 18.04 LTS.
+
+Quisk Version 4.1.22  August 2018
+=================================
+I fixed the FM squelch so that it works for multiple receivers.
+
+The record to file and play from file logic was simplified and improved. See the Config/Config
+screen and the Help button. Quisk can now both record and play an IQ samples file. I removed
+the 4 Gig file size limitation inherent in a WAV file so that larger files can be used.
+
+I fixed some of the problems with the new Linux 18.04 LTS. There is still an assertion error when accessing
+the config screens. I am trying to work around it, but it seems to be a bug in the gnome desktop.
+
+Quisk Version 4.1.21  July 2018
+===============================
+I made additional changes for the Hermes Lite 2 project. Control the CW hang time with the
+Config/Radio/Timing/Tx_delay_msecs option.  I added a change for the Dx Cluster feature
+from YO5RXM. Thanks!
+
+Quisk Version 4.1.20  June 2018
+===============================
+I made additional changes for the Hermes Lite 2 project. I added a change for the Dx Cluster feature
+from YO5RXM. Thanks! I fixed a graph screen flicker problem on Windows.
+
+Quisk Version 4.1.19  June 2018
+===============================
+I made additional changes for the Hermes Lite 2 project. There are now separate Rx and Tx filter
+settings. If multiple receivers are in use, the Rx filter is that of the highest frequency band.
+
+Quisk Version 4.1.18  June 2018
+===============================
+I added improved code for FreeDV to support the new 700D mode.
+
+Quisk Version 4.1.17  May 2018
+==============================
+The Quisk VNA program now works with Hermes-Lite 2. Firmware 62 and above is required.
+I made additional changes for the Hermes Lite 2 project.
+
+Quisk Version 4.1.16  May 2018
+==============================
+I updated the built in version of FreeDV digital voice. It now includes newer modes such as 700D.
+I added the column for the IO bus to the Red Pitaya radio. I fixed a bug when selecting the
+"Bands" screen. I added shortcut keys to the buttons. If a button has an underlined letter,
+pressing ALT and the letter will press the button. This is convenient for operation, and allows
+Quisk to be controlled by another program that can generate key presses. If you have set a PTT
+shortcut key, please check its validity on the radio Keys screen. The shortcut characters for the
+band buttons can be changed in the config file.
+
+Quisk Version 4.1.15  March 2018
+================================
+I changed the logic for the PTT keyboard shortcut. If you are using a PTT shortcut key,
+go to the Config/Radio/Keys screen and check the keys you are using.  I made further changes
+to support Hermes-Lite. And the "darwin" platform was added to defaults. I fixed the
+Status screen flickering that occurred on Windows.
+
+Quisk Version 4.1.14  March 2018
+================================
+The use of the Spot button for testing has been removed, and proper operation restored.
+There are further improvements to the Hermes-Lite power and current calculations, including a
+correction to the PA current measurement from Steve.  Thanks Steve!
+
+There is a new "Keys" tab in the configuration screens where you can set one or two hot keys
+to press the PTT button.  Space bar seems a popular choice.  I added a toggle option so that
+PTT stays on until the next key press.
+
+I made further improvements to wxPython 4.x Phoenix support, but feel free to
+continue to use the 3.x version.
+
+Quisk Version 4.1.13  February 2018
+===================================
+This version is only for TEST.  The Spot button now generates an audio tone from 0 to 5000
+Hertz controlled by the sidetone slider.
+I added power calculations for the Hermes-Lite project.
+Quisk now works with the wxPython 4.0 Phoenix release.  This code is beta, so feel free to
+continue to use the 3.x version.
+
 Quisk Version 4.1.12  December 2017
 ===================================
 Sid, G3VBV, updated the documentation file. Thanks Sid! I fixed a network problem with the HiQSDR

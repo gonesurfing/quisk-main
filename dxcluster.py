@@ -1,3 +1,4 @@
+from __future__ import absolute_import
 # This code was contributed by Christof, DJ4CM.  Many Thanks!!
 
 import threading
@@ -5,7 +6,7 @@ import time
 import telnetlib
 import quisk_conf_defaults as conf
 
-class DxEntry():
+class DxEntry:
   def __init__(self):
     self.info = []
     
@@ -106,15 +107,20 @@ class DxCluster(threading.Thread):
     self.tn = telnetlib.Telnet()
       
   def telnetConnect(self):    
-    self.tn.open(conf.dxClHost, conf.dxClPort, 10)
-    self.tn.read_until('login:', 10)
-    self.tn.write(str(conf.user_call_sign) + "\n")		# user_call_sign may be Unicode
+    for i in range(10):
+      try:
+        self.tn.open(conf.dxClHost, conf.dxClPort, 10)
+        self.tn.read_until(b"login:", 10)
+        self.tn.write(conf.user_call_sign.encode('utf-8', errors='ignore') + b"\n")		# user_call_sign may be Unicode
+        break
+      except:
+        time.sleep(0.5)
     if conf.dxClPassword:
-      self.tn.read_until("Password: ")
-      self.tn.write(str(conf.dxClPassword) + "\n")
+      self.tn.read_until(b"Password: ")
+      self.tn.write(conf.dxClPassword.encode('utf-8', errors='ignore') + b"\n")
 
   def telnetRead(self):
-    message = self.tn.read_until('\n', 60).decode(encoding='utf-8', errors='replace')
+    message = self.tn.read_until(b'\n', 60).decode(encoding='utf-8', errors='replace')
     if self.doQuit.isSet() == False:
       dxEntry = DxEntry();
       if dxEntry.parseMessage(message):

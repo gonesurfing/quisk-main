@@ -1,11 +1,11 @@
+from __future__ import absolute_import
+from __future__ import division
 # These are the configuration parameters for Quisk using the
 # SDR-IQ by RfSpace as the capture device.
 
 # Please do not change this sample file.
 # Instead copy it to your own .quisk_conf.py and make changes there.
 # See quisk_conf_defaults.py for more information.
-
-from sdriqpkg import quisk_hardware		# Use different hardware file
 
 # In ALSA, soundcards have these names:
 #name_of_sound_play = "hw:0"

@@ -1,5 +1,7 @@
 
 from __future__ import print_function
+from __future__ import absolute_import
+from __future__ import division
 
 import threading, time, math, socket, re
 from quisk_hardware_model import Hardware as BaseHardware
@@ -51,16 +53,17 @@ class Hardware(BaseHardware):
     MESSAGE = "get freq"
     srsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     srsock.settimeout(1)
-    srsock.sendto(MESSAGE, (self.usbsr_ip_address, self.usbsr_port))
+    srsock.sendto(MESSAGE.encode('utf-8', errors='ignore'), (self.usbsr_ip_address, self.usbsr_port))
     try:
       data, addr = srsock.recvfrom(1024) # buffer size is 1024 bytes
+      data = data.decode('utf-8', errors='replace')
     except:
       srsock.close()
       print ('error')
       return None #maybe return None instead to simplify if statement
     else:
       srsock.close()
-      print ('recieved data', data)
+      print ('received data', data)
       freq = float(re.findall("\d+.\d+", data)[0])
       freq = int(freq * 1.0e6)
       return freq
@@ -71,7 +74,7 @@ class Hardware(BaseHardware):
     freq = freq/float(1.0e6)
     MESSAGE = "set freq " + str(freq)
     srsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    srsock.sendto(MESSAGE, (self.usbsr_ip_address, self.usbsr_port))
+    srsock.sendto(MESSAGE.encode('utf-8', errors='ignore'), (self.usbsr_ip_address, self.usbsr_port))
     print (MESSAGE)
     return True
 
@@ -79,14 +82,15 @@ class Hardware(BaseHardware):
     if event:
       if event.GetEventObject().GetValue():
         self.ptt_button = 1
-	message = "set ptt on"
+        message = "set ptt on"
       else:
         self.ptt_button = 0
-	message = "set ptt off"
+        message = "set ptt off"
       srsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
       srsock.settimeout(1)
-      srsock.sendto(message, (self.usbsr_ip_address, self.usbsr_port))
+      srsock.sendto(message.encode('utf-8', errors='ignore'), (self.usbsr_ip_address, self.usbsr_port))
       data, addr = srsock.recvfrom(1024) # buffer size is 1024 bytes
+      data = data.decode('utf-8', errors='replace')
       srsock.close()
       print (data)
       if data == "ok":

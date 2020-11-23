@@ -1,21 +1,34 @@
 # These are Quisk widgets
 
+from __future__ import print_function
+from __future__ import absolute_import
+from __future__ import division
+
 import sys, re
 import wx, wx.lib.buttons, wx.lib.stattext
-from types import *
 # The main script will alter quisk_conf_defaults to include the user's config file.
 import quisk_conf_defaults as conf
 import _quisk as QS
 
+wxVersion = wx.version()[0]
+
+def EmptyBitmap(width, height):
+  if wxVersion in ('2', '3'):
+    return wx.EmptyBitmap(width, height)
+  else:
+    return wx.Bitmap(width, height)
+
 def MakeWidgetGlobals():
-  global button_font, button_bezel, button_width, button_height, button_text_width, button_text_height
+  global button_font, button_uline_font, button_bezel, button_width, button_height, button_text_width, button_text_height
   global _bitmap_menupop, _bitmap_sliderpop, _bitmap_cyclepop
   button_bezel = 3		# size of button bezel in pixels
   button_font = wx.Font(conf.button_font_size, wx.FONTFAMILY_SWISS, wx.NORMAL,
-           wx.FONTWEIGHT_NORMAL, face=conf.quisk_typeface)
+           wx.FONTWEIGHT_NORMAL, False, conf.quisk_typeface)
+  button_uline_font = wx.Font(conf.button_font_size, wx.FONTFAMILY_SWISS, wx.NORMAL,
+           wx.FONTWEIGHT_NORMAL, True, conf.quisk_typeface)
   dc = wx.MemoryDC()
   dc.SetFont(button_font)
-  tmp_bm = wx.EmptyBitmap(1, 1)		# Thanks to NS4Y
+  tmp_bm = EmptyBitmap(1, 1)		# Thanks to NS4Y
   dc.SelectObject(tmp_bm)
   button_text_width, button_text_height = dc.GetTextExtent('0')
   button_width = button_text_width + 2 + 2 * button_bezel # + 4 * int(self.useFocusInd)
@@ -23,7 +36,7 @@ def MakeWidgetGlobals():
   # Make a bitmap for the slider pop button
   height = button_text_height + 2	# button height less bezel
   width = height
-  _bitmap_sliderpop = wx.EmptyBitmap(height, height)
+  _bitmap_sliderpop = EmptyBitmap(height, height)
   dc.SelectObject(_bitmap_sliderpop)
   pen = wx.Pen(conf.color_enable, 1)
   dc.SetPen(pen)
@@ -59,7 +72,7 @@ def MakeWidgetGlobals():
   dc.DrawLine(x0 - 2, y0, x0 + 3, y0)
   dc.SelectObject(wx.NullBitmap)
   # Make a bitmap for the menu pop button
-  _bitmap_menupop = wx.EmptyBitmap(height, height)
+  _bitmap_menupop = EmptyBitmap(height, height)
   dc.SelectObject(_bitmap_menupop)
   dc.SetBackground(brush)
   dc.Clear()
@@ -71,7 +84,7 @@ def MakeWidgetGlobals():
     dc.DrawLine(x + 5, y + 1, width - 3, y + 1)
   dc.SelectObject(wx.NullBitmap)
   # Make a bitmap for the cycle button
-  _bitmap_cyclepop = wx.EmptyBitmap(height, height)
+  _bitmap_cyclepop = EmptyBitmap(height, height)
   dc.SelectObject(_bitmap_cyclepop)
   dc.SetBackground(brush)
   dc.SetFont(button_font)
@@ -106,7 +119,7 @@ class FrequencyDisplay(wx.lib.stattext.GenStaticText):
          style=wx.ALIGN_CENTER|wx.ST_NO_AUTORESIZE)
     border = 4
     for points in range(30, 6, -1):
-      font = wx.Font(points, wx.FONTFAMILY_SWISS, wx.NORMAL, wx.FONTWEIGHT_NORMAL, face=conf.quisk_typeface)
+      font = wx.Font(points, wx.FONTFAMILY_SWISS, wx.NORMAL, wx.FONTWEIGHT_NORMAL, False, conf.quisk_typeface)
       self.SetFont(font)
       w, h = self.GetTextExtent('333 444 555 Hz')
       if w < width and h < height - border * 2:
@@ -143,10 +156,10 @@ class FrequencyDisplay(wx.lib.stattext.GenStaticText):
     self.SetLabel('%s Hz' % txt)
   def GetIndex(self, event):		# Determine which digit is being changed
     mouse_x, mouse_y = event.GetPosition()
-    width, height = self.GetClientSizeTuple()
+    width, height = self.GetClientSize().Get()
     text = self.GetLabel()
     tw, th = self.GetTextExtent(text)
-    edge = (width - tw) / 2
+    edge = (width - tw) // 2
     digit = self.GetTextExtent('0')[0]
     blank = self.GetTextExtent(' ')[0]
     if mouse_x < edge - digit:
@@ -161,7 +174,7 @@ class FrequencyDisplay(wx.lib.stattext.GenStaticText):
       x -= digit * 3 + blank
     if x < 0:
       return None
-    return x / digit + shift * 3	# index of digit being changed
+    return x // digit + shift * 3	# index of digit being changed
   def OnLeftDown(self, event):		# Click on a digit changes the frequency
     if self.repeat_time:
       self.timer.Stop()
@@ -170,8 +183,8 @@ class FrequencyDisplay(wx.lib.stattext.GenStaticText):
     if index is not None:
       self.index = index
       mouse_x, mouse_y = event.GetPosition()
-      width, height = self.GetClientSizeTuple()
-      if mouse_y < height / 2:
+      width, height = self.GetClientSize().Get()
+      if mouse_y < height // 2:
         self.increase = True
       else:
         self.increase = False
@@ -231,10 +244,18 @@ class SliderBoxH:
       w2, h2 = self.text_ctrl.GetSize()
       self.text_ctrl.SetSizeHints(w2, -1, w2)
       self.slider = wx.Slider(parent, -1, init, themin, themax)
-    else:
+    else:	# Thanks to Stephen Hurd
       self.text_ctrl = wx.StaticText(parent, -1, t, pos=pos)
       w2, h2 = self.text_ctrl.GetSize()
-      self.slider = wx.Slider(parent, -1, init, themin, themax, (pos[0] + w2, pos[1]), (width - w2, h2))
+      self.slider = wx.Slider(parent, -1, init, themin, themax)
+      w3, h3 = self.slider.GetSize()
+      p2 = pos[1]
+      if h3 > h2:
+        p2 -= (h3 - h2) / 2
+      else:
+        p2 += (h2 - h3) / 2
+      self.slider.SetSize((width - w2, h3))
+      self.slider.SetPosition((pos[0] + w2, p2))
     self.slider.Bind(wx.EVT_SCROLL, self.OnScroll)
     self.text_ctrl.SetForegroundColour(parent.GetForegroundColour())
     self.OnScroll()
@@ -260,7 +281,7 @@ class SliderBoxHH(SliderBoxH, wx.BoxSizer):
   def __init__(self, parent, text, init, themin, themax, handler, display):
     wx.BoxSizer.__init__(self, wx.HORIZONTAL)
     SliderBoxH.__init__(self, parent, text, init, themin, themax, handler, display, None, None)
-    #font = wx.Font(10, wx.FONTFAMILY_SWISS, wx.NORMAL, wx.FONTWEIGHT_NORMAL, face=conf.quisk_typeface)
+    #font = wx.Font(10, wx.FONTFAMILY_SWISS, wx.NORMAL, wx.FONTWEIGHT_NORMAL, False, conf.quisk_typeface)
     #self.text_ctrl.SetFont(font)
     self.Add(self.text_ctrl, 0, wx.ALIGN_CENTER)
     self.Add(self.slider, 1, wx.ALIGN_CENTER)
@@ -296,8 +317,8 @@ class SliderBoxV(wx.BoxSizer):
       self.width = max(w2, sw) + self.text_ctrl.GetCharWidth()
       self.text_ctrl.SetSizeHints(self.width, -1, self.width)
     self.text_ctrl.SetForegroundColour(parent.GetForegroundColour())
-    self.Add(self.text_ctrl, 0, wx.ALIGN_CENTER_VERTICAL)
-    self.Add(self.slider, 1, wx.ALIGN_CENTER_VERTICAL)
+    self.Add(self.text_ctrl, 0, 0)
+    self.Add(self.slider, 1, 0)
   def Change(self, event):
     event.Skip()
     self.text_ctrl.SetLabel(str(self.slider.GetValue()))
@@ -327,9 +348,9 @@ class QuiskText1(wx.lib.stattext.GenStaticText):
     # Set decreasing point size until size_text fits in the space available
     for points in range(20, 6, -1):
       if self.fixed:
-        font = wx.Font(points, wx.FONTFAMILY_MODERN, wx.NORMAL, wx.FONTWEIGHT_NORMAL, face=conf.quisk_typeface)
+        font = wx.Font(points, wx.FONTFAMILY_MODERN, wx.NORMAL, wx.FONTWEIGHT_NORMAL, False, conf.quisk_typeface)
       else:
-        font = wx.Font(points, wx.FONTFAMILY_SWISS, wx.NORMAL, wx.FONTWEIGHT_NORMAL, face=conf.quisk_typeface)
+        font = wx.Font(points, wx.FONTFAMILY_SWISS, wx.NORMAL, wx.FONTWEIGHT_NORMAL, False, conf.quisk_typeface)
       dc.SetFont(font)
       w, h = dc.GetTextExtent(self.size_text)
       if w < width and h < height:
@@ -338,7 +359,7 @@ class QuiskText1(wx.lib.stattext.GenStaticText):
     self.SetFont(font)
   def OnPaint(self, event):
     dc = wx.PaintDC(self)
-    width, height = self.GetClientSize()
+    width, height = self.GetClientSize().Get()
     if not width or not height:
       return
     dc.SetPen(self.pen)
@@ -363,7 +384,7 @@ class QuiskText1(wx.lib.stattext.GenStaticText):
     if style & wx.ALIGN_RIGHT:
       x = width - w - 4
     elif style & wx.ALIGN_CENTER:
-      x = (width - w - 1)/2
+      x = (width - w - 1)//2
     else:
       x = 3
     dc.DrawText(label, x, y)
@@ -375,7 +396,7 @@ class QuiskText(wx.BoxSizer):
   def __init__(self, parent, size_text, height, style=0, fixed=False):
     wx.BoxSizer.__init__(self, wx.HORIZONTAL)
     self.TextCtrl = QuiskText1(parent, size_text, height, style, fixed)
-    self.Add(self.TextCtrl, 1, flag=wx.ALIGN_LEFT|wx.ALIGN_CENTER_VERTICAL)
+    self.Add(self.TextCtrl, 1, flag=wx.ALIGN_CENTER_VERTICAL)
   def SetLabel(self, label):
     self.TextCtrl.SetLabel(label)
 
@@ -388,6 +409,12 @@ class QuiskText(wx.BoxSizer):
 
 class QuiskButtons:
   """Base class for special buttons."""
+  def __init__(self):
+    self.up_brush = wx.Brush(conf.color_btn)
+    r, g, b = self.up_brush.GetColour().Get(False)
+    r, g, b = min(255,r+32), min(255,g+32), min(255,b+32)
+    self.down_brush = wx.Brush(wx.Colour(r, g, b))
+    self.color_disable = conf.color_disable
   def InitButtons(self, text, text_color=None):
     if text_color:
       self.text_color = text_color
@@ -397,6 +424,7 @@ class QuiskButtons:
     self.SetBackgroundColour(conf.color_btn)
     self.SetUseFocusIndicator(False)
     self.decoration = None
+    self.char_shortcut = ''
     self.SetFont(button_font)
     if text:
       w, h = self.GetTextExtent(text)
@@ -408,21 +436,42 @@ class QuiskButtons:
     h += button_bezel * 2
     self.SetSizeHints(w, h, 999, h, 1, 1)
   def DrawLabel(self, dc, width, height, dx=0, dy=0):	# Override to change Disable text color
+      if self.up:	# Clear the background here
+        dc.SetBrush(self.up_brush)
+      else:
+        dc.SetBrush(self.down_brush)
+      dc.SetPen(wx.TRANSPARENT_PEN)
+      bw = self.bezelWidth
+      dc.DrawRectangle(bw, bw, width - bw * 2, height - bw * 2)
       dc.SetFont(self.GetFont())
       label = self.GetLabel()
       tw, th = dc.GetTextExtent(label)
       self.label_width = tw
       dx = dy = self.labelDelta
-      slabel = re.split('('+unichr(0x25CF)+')', label)	# unicode symbol for record: a filled dot
+      slabel = re.split('('+u'\u25CF'+')', label)	# unicode symbol for record: a filled dot
       for part in slabel:		# This code makes the symbol red.  Thanks to Christof, DJ4CM.
         if self.IsEnabled():
-          if part == unichr(0x25CF):
+          if part == u'\u25CF':
             dc.SetTextForeground('red')
           else:
             dc.SetTextForeground(self.text_color)
         else:
-          dc.SetTextForeground(conf.color_disable)
-        dc.DrawText(part, (width-tw)//2+dx, (height-th)//2+dy)
+          dc.SetTextForeground(self.color_disable)
+        if self.char_shortcut:
+          scut = part.split(self.char_shortcut, 1)
+          if len(scut) == 2:	# The shortcut character is present in the string
+            dc.DrawText(scut[0], (width-tw)//2+dx, (height-th)//2+dy)
+            dx += dc.GetTextExtent(scut[0])[0]
+            dc.SetFont(button_uline_font)
+            dc.DrawText(self.char_shortcut, (width-tw)//2+dx, (height-th)//2+dy)
+            dx += dc.GetTextExtent(self.char_shortcut)[0]
+            dc.SetFont(self.GetFont())
+            dc.DrawText(scut[1], (width-tw)//2+dx, (height-th)//2+dy)
+            dx += dc.GetTextExtent(scut[1])[0]
+          else:
+            dc.DrawText(part, (width-tw)//2+dx, (height-th)//2+dy)
+        else:
+          dc.DrawText(part, (width-tw)//2+dx, (height-th)//2+dy)
         dx += dc.GetTextExtent(part)[0]
       if self.decoration and conf.decorate_buttons:
         wd, ht = dc.GetTextExtent(self.decoration)
@@ -442,6 +491,13 @@ class QuiskButtons:
       dc.DrawText(uch, width - wd, (height - ht) // 2)
     else:
       dc.DrawText(uch, width - wd * 15 // 10, (height - ht) // 2)
+  def SetColorGray(self):
+    self.SetBackgroundColour(wx.Colour(220, 220, 220))	# This sets the bezel colors
+    self.SetBezelWidth(2)
+    self.text_color = 'black'
+    self.color_disable = 'white'
+    self.up_brush = wx.Brush(wx.Colour(220, 220, 220))
+    self.down_brush = wx.Brush(wx.Colour(240, 240, 240))
 
 class QuiskBitmapButton(wx.lib.buttons.GenBitmapButton):
   def __init__(self, parent, command, bitmap, use_right=False):
@@ -474,6 +530,7 @@ class QuiskBitmapButton(wx.lib.buttons.GenBitmapButton):
 class QuiskPushbutton(QuiskButtons, wx.lib.buttons.GenButton):
   """A plain push button widget."""
   def __init__(self, parent, command, text, use_right=False, text_color=None, style=0):
+    QuiskButtons.__init__(self)
     wx.lib.buttons.GenButton.__init__(self, parent, -1, text, style=style)
     self.command = command
     self.Bind(wx.EVT_BUTTON, self.OnButton)
@@ -496,6 +553,7 @@ class QuiskPushbutton(QuiskButtons, wx.lib.buttons.GenButton):
 class QuiskRepeatbutton(QuiskButtons, wx.lib.buttons.GenButton):
   """A push button that repeats when held down."""
   def __init__(self, parent, command, text, up_command=None, use_right=False):
+    QuiskButtons.__init__(self)
     wx.lib.buttons.GenButton.__init__(self, parent, -1, text)
     self.command = command
     self.up_command = up_command
@@ -550,15 +608,16 @@ class QuiskCheckbutton(QuiskButtons, wx.lib.buttons.GenToggleButton):
   """A button that pops up and down, and changes color with each push."""
   # Check button; get the checked state with self.GetValue()
   def __init__(self, parent, command, text, color=None, use_right=False):
+    QuiskButtons.__init__(self)
     wx.lib.buttons.GenToggleButton.__init__(self, parent, -1, text)
     self.InitButtons(text)
     self.Bind(wx.EVT_BUTTON, self.OnButton)
     self.button_down = 0		# used for radio buttons
     self.command = command
     if color is None:
-      self.color = conf.color_check_btn
+      self.down_brush = wx.Brush(conf.color_check_btn)
     else:
-      self.color = color
+      self.down_brush = wx.Brush(color)
     self.direction = 1
     if use_right:
       self.Bind(wx.EVT_RIGHT_DOWN, self.OnRightDown)
@@ -566,19 +625,11 @@ class QuiskCheckbutton(QuiskButtons, wx.lib.buttons.GenToggleButton):
   def SetValue(self, value, do_cmd=False):
     wx.lib.buttons.GenToggleButton.SetValue(self, value)
     self.button_down = value
-    if value:
-      self.SetBackgroundColour(self.color)
-    else:
-      self.SetBackgroundColour(conf.color_btn)
     if do_cmd and self.command:
       event = wx.PyEvent()
       event.SetEventObject(self)
       self.command(event)
   def OnButton(self, event):
-    if self.GetValue():
-      self.SetBackgroundColour(self.color)
-    else:
-      self.SetBackgroundColour(conf.color_btn)
     if self.command:
       self.command(event)
   def OnRightDown(self, event):
@@ -587,6 +638,8 @@ class QuiskCheckbutton(QuiskButtons, wx.lib.buttons.GenToggleButton):
   def OnRightUp(self, event):
     self.OnLeftUp(event)
     self.direction = 1
+  def Shortcut(self, event):
+    self.SetValue(not self.GetValue(), True)
 
 class QuiskBitField(wx.Window):
   """A control used to set/unset bits."""
@@ -627,7 +680,7 @@ class QuiskBitField(wx.Window):
       if self.value & (1 << power):
         dc.DrawText('1', x, 0)
   def OnLeftDown(self, event):
-    mouse_x, mouse_y = event.GetPositionTuple()
+    mouse_x, mouse_y = event.GetPosition().Get()
     for index in range(len(self.linex)):
       if mouse_x < self.linex[index]:
         break
@@ -663,8 +716,8 @@ class QFilterButtonWindow(wx.Frame):
         incr = 500
       elif bw == 10000:
         incr = 1000
-    x, y = wrap.GetPositionTuple()
-    x, y = wrap.GetParent().ClientToScreenXY(x, y)
+    x, y = wrap.GetPosition().Get()
+    x, y = wrap.GetParent().ClientToScreen(wx.Point(x, y))
     w, h = wrap.GetSize()
     height = h * 10
     size = (w, height)
@@ -683,7 +736,7 @@ class QFilterButtonWindow(wx.Frame):
     except ValueError:
       index = 0
       self.wrap.button.slider_value = self.valuelist[0]
-    self.slider = wx.Slider(self, -1, index, 0, 100, (0, 0), (w/2, height), wx.SL_VERTICAL|wx.SL_INVERSE)
+    self.slider = wx.Slider(self, -1, index, 0, 100, (0, 0), (w//2, height), wx.SL_VERTICAL|wx.SL_INVERSE)
     self.slider.Bind(wx.EVT_SCROLL, self.OnSlider)
     self.SetTitle("%d" % self.valuelist[index])
     self.Show()
@@ -704,8 +757,8 @@ class QSliderButtonWindow(wx.Frame):
   """Create a window with controls for the button"""
   def __init__(self, button, value):
     self.button = button
-    x, y = button.GetPositionTuple()
-    x, y = button.GetParent().ClientToScreenXY(x, y)
+    x, y = button.GetPosition().Get()
+    x, y = button.GetParent().ClientToScreen(wx.Point(x, y))
     w, h = button.GetSize()
     height = h * 10
     size = (w, height)
@@ -719,7 +772,7 @@ class QSliderButtonWindow(wx.Frame):
     self.Bind(wx.EVT_CLOSE, self.OnClose)
     self.slider = wx.Slider(self, -1, value,
              self.button.slider_min, self.button.slider_max,
-             (0, 0), (w/2, height), wx.SL_VERTICAL|wx.SL_INVERSE)
+             (0, 0), (w//2, height), wx.SL_VERTICAL|wx.SL_INVERSE)
     self.slider.Bind(wx.EVT_SCROLL, self.OnSlider)
     if self.button.display:
       value = float(value) / self.button.slider_max
@@ -741,10 +794,10 @@ class QDualSliderButtonWindow(wx.Frame):	# Thanks to Steve, KF7O
   """Create a window with controls for the button"""
   def __init__(self, button):
     self.button = button
-    x, y = button.GetPositionTuple()
-    x, y = button.GetParent().ClientToScreenXY(x, y)
+    x, y = button.GetPosition().Get()
+    x, y = button.GetParent().ClientToScreen(wx.Point(x, y))
     w, h = button.GetSize()
-    w = w * 12 / 10
+    w = w * 12 // 10
     height = h * 10
     size = (w, height)
     if sys.platform == 'win32':
@@ -760,12 +813,12 @@ class QDualSliderButtonWindow(wx.Frame):	# Thanks to Steve, KF7O
     hbox = wx.BoxSizer(wx.HORIZONTAL)
     self.lslider = wx.Slider(panel, -1, self.button.lslider_value,
              self.button.slider_min, self.button.slider_max,
-             (0, 0), (w/2, height), wx.SL_VERTICAL|wx.SL_INVERSE)
+             (0, 0), (w//2, height), wx.SL_VERTICAL|wx.SL_INVERSE)
     self.lslider.Bind(wx.EVT_SCROLL, self.OnSlider)
     hbox.Add(self.lslider, flag=wx.LEFT)
     self.rslider = wx.Slider(panel, -1, self.button.rslider_value,
              self.button.slider_min, self.button.slider_max,
-             (0, 0), (w/2, height), wx.SL_VERTICAL|wx.SL_INVERSE)
+             (0, 0), (w//2, height), wx.SL_VERTICAL|wx.SL_INVERSE)
     self.rslider.Bind(wx.EVT_SCROLL, self.OnSlider)
     hbox.Add(self.rslider, flag=wx.RIGHT)
     panel.SetSizer(hbox)
@@ -806,9 +859,9 @@ class WrapPushButton(WrapControl):
   def __init__(self, button, control):
     self.button = button
     WrapControl.__init__(self)
-    self.Add(button, 1, flag=wx.ALIGN_LEFT|wx.ALIGN_CENTER_VERTICAL)
+    self.Add(button, 1, flag=wx.ALIGN_CENTER_VERTICAL)
     b = QuiskPushbutton(button.GetParent(), control, conf.btn_text_switch)
-    self.Add(b, 0, flag=wx.ALIGN_RIGHT|wx.ALIGN_CENTER_VERTICAL|wx.LEFT, border=2)
+    self.Add(b, 0, flag=wx.ALIGN_CENTER_VERTICAL|wx.LEFT, border=2)
 
 class WrapMenu(WrapControl):
   def __init__(self, button, menu, on_open=None):
@@ -816,9 +869,9 @@ class WrapMenu(WrapControl):
     self.menu = menu
     self.on_open = on_open
     WrapControl.__init__(self)
-    self.Add(button, 1, flag=wx.ALIGN_LEFT|wx.ALIGN_CENTER_VERTICAL)
+    self.Add(button, 1, flag=wx.ALIGN_CENTER_VERTICAL)
     b = QuiskBitmapButton(button.GetParent(), self.OnPopButton, _bitmap_menupop)
-    self.Add(b, 0, flag=wx.ALIGN_RIGHT|wx.ALIGN_CENTER_VERTICAL|wx.LEFT, border=2)
+    self.Add(b, 0, flag=wx.ALIGN_CENTER_VERTICAL|wx.LEFT, border=2)
   def OnPopButton(self, event):
     if self.on_open:
       self.on_open(self.menu)
@@ -841,11 +894,15 @@ class WrapSlider(WrapControl):
     self.display = display					# Display the value at the top
     self.wintype = wintype
     WrapControl.__init__(self)
-    self.Add(button, 1, flag=wx.ALIGN_LEFT|wx.ALIGN_CENTER_VERTICAL)
+    self.Add(button, 1, flag=wx.ALIGN_CENTER_VERTICAL)
     b = QuiskBitmapButton(button.GetParent(), self.OnPopButton, _bitmap_sliderpop)
-    self.Add(b, 0, flag=wx.ALIGN_RIGHT|wx.ALIGN_CENTER_VERTICAL|wx.LEFT, border=2)
+    self.Add(b, 0, flag=wx.ALIGN_CENTER_VERTICAL|wx.LEFT, border=2)
   def SetDual(self, dual):		# dual means separate slider values for on and off
     self.dual = dual
+    if self.adjust:
+      self.adjust.Destroy()
+      self.adjust = None
+  def DeleteSliderWindow(self):
     if self.adjust:
       self.adjust.Destroy()
       self.adjust = None
@@ -905,14 +962,14 @@ class WrapDualSlider(WrapControl):	# Thanks to Steve, KF7O
     self.slider_max = slider_max
     self.display = display                  # Display the value at the top
     WrapControl.__init__(self)
-    self.Add(button, 1, flag=wx.ALIGN_LEFT|wx.ALIGN_CENTER_VERTICAL)
+    self.Add(button, 1, flag=wx.ALIGN_CENTER_VERTICAL)
     print("Size",self.button.GetSize())
     ## This is a hack to get _bitmap_sliderpop
     ## It would be better if _bitmap_sliderpop were not a global variable 
     ##but a first-class member in another module
     _bitmap_sliderpop = MakeWidgetGlobals.__globals__['_bitmap_sliderpop']
-    b = QuiskBitmapButton(button.GetParent(), self.OnPopButton, _bitmap_sliderpop) ##wx.EmptyBitmap(10,10))
-    self.Add(b, 0, flag=wx.ALIGN_RIGHT|wx.ALIGN_CENTER_VERTICAL|wx.LEFT, border=2)
+    b = QuiskBitmapButton(button.GetParent(), self.OnPopButton, _bitmap_sliderpop)
+    self.Add(b, 0, flag=wx.ALIGN_CENTER_VERTICAL|wx.LEFT, border=2)
   def OnPopButton(self, event):
     if self.adjust:
       self.adjust.Destroy()
@@ -994,8 +1051,13 @@ class QuiskCycleCheckbutton(QuiskCheckbutton):
       if self.command:
         self.command(event)
   def DrawLabel(self, dc, width, height, dx=0, dy=0):
-    QuiskButtons.DrawLabel(self, dc, width, height, dx, dy)
+    QuiskCheckbutton.DrawLabel(self, dc, width, height, dx, dy)
     self.DrawGlyphCycle(dc, width, height)
+  def Shortcut(self, event):
+    index = self.index + 1
+    if index >= len(self.labels):
+      index = 0
+    self.SetIndex(index, True)
 
 class RadioButtonGroup:
   """This class encapsulates a group of radio buttons.  This class is not a button!
@@ -1004,23 +1066,31 @@ class RadioButtonGroup:
   of labels can be a list/tuple, and the corresponding button will
   be a cycle button.
   """
-  def __init__(self, parent, command, labels, default):
+  def __init__(self, parent, command, labels, default, shortcuts=()):
     self.command = command
     self.buttons = []
     self.button = None
+    self.shortcuts = list(shortcuts[:])
+    self.last_shortcut = 0
+    i = 0
     for text in labels:
-      if type(text) in (ListType, TupleType):
+      if isinstance(text, (list, tuple)):
         b = QuiskCycleCheckbutton(parent, self.OnButton, text, is_radio=True)
+        if shortcuts:
+          b.char_shortcut = shortcuts[i]
         for t in text:
           if t == default and self.button is None:
             b.SetLabel(t)
             self.button = b
       else:
         b = QuiskCheckbutton(parent, self.OnButton, text)
+        if shortcuts:
+          b.char_shortcut = shortcuts[i]
         if text == default and self.button is None:
           b.SetValue(True)
           self.button = b
       self.buttons.append(b)
+      i += 1
   def ReplaceButton(self, index, button):	# introduce a specialized button
     b = self.buttons[index]
     b.Destroy()
@@ -1031,7 +1101,7 @@ class RadioButtonGroup:
       button.button.command = self.OnButton
     else:
       button.command = self.OnButton
-  def SetLabel(self, label, do_cmd=False):
+  def SetLabel(self, label, do_cmd=False, direction=None):
     self.button = None
     for b in self.buttons:
       if self.button is not None:
@@ -1046,6 +1116,8 @@ class RadioButtonGroup:
           b.SetIndex(index)
           self.button = b
           b.SetValue(True)
+          if direction is not None:
+            b.direction = direction
       elif b.GetLabel() == label:
         b.SetValue(True)
         self.button = b
@@ -1074,7 +1146,29 @@ class RadioButtonGroup:
   def GetSelectedButton(self):		# return the selected button
     return self.button
   def GetIndex(self):	# Careful.  Some buttons are complex.
+    if not self.button:
+      return None
     return self.buttons.index(self.button)
+  def Shortcut(self, event):
+    # Multiple buttons can have the same shortcut, so move to the next one.
+    index = self.last_shortcut + 1
+    length = len(self.shortcuts)
+    if index >= length:
+      index = 0
+    for i in range(length):
+      shortcut = self.shortcuts[index]
+      if shortcut and wx.GetKeyState(ord(shortcut)):
+        break
+      index += 1
+      if index >= length:
+        index = 0
+    else:
+      return
+    self.last_shortcut = index
+    button = self.buttons[index]
+    event = wx.PyEvent()
+    event.SetEventObject(button)
+    button.OnButton(event)
 
 class _PopWindow(wx.PopupWindow):
   def __init__(self, parent, command, labels, default):
@@ -1102,7 +1196,7 @@ class RadioBtnPopup:
     self.button_data = {}
     labels = []
     for item in in_labels:
-      if type(item) in (ListType, TupleType):
+      if isinstance(item, (list, tuple)):
         labels.append(item[0])
         self.button_data[item[0]] = [_bitmap_cyclepop, 0, len(item)]	# bitmap, index, max_index
       else:
@@ -1111,9 +1205,9 @@ class RadioBtnPopup:
     self.RbDialog.Hide()
     self.pop_control = wx.BoxSizer(wx.HORIZONTAL)
     self.first_button = QuiskPushbutton(parent, self.OnFirstButton, labels[0], text_color=conf.color_popchoice)
-    self.first_button.decoration = unichr(0x21D2)
+    self.first_button.decoration = u'\u21D2'
     self.second_button = QuiskBitmapButton(parent, self.OnSecondButton, _bitmap_menupop, use_right=True)
-    self.pop_control.Add(self.first_button, 1, flag=wx.ALIGN_LEFT|wx.ALIGN_CENTER_VERTICAL)
+    self.pop_control.Add(self.first_button, 1, flag=wx.ALIGN_CENTER_VERTICAL)
     self.pop_control.Add(self.second_button, 0, flag=wx.ALIGN_RIGHT|wx.ALIGN_CENTER_VERTICAL|wx.LEFT, border=2)
     self.pop_control.Show(self.second_button, False)
     self.adjust = None
@@ -1132,9 +1226,9 @@ class RadioBtnPopup:
     if self.RbDialog.IsShown():
       self.RbDialog.Hide()
       return
-    dw, dh = self.RbDialog.GetSizeTuple()
-    bw, bh = self.first_button.GetSizeTuple()
-    bx, by = self.first_button.ClientToScreen((0, 0))
+    dw, dh = self.RbDialog.GetSize().Get()
+    bw, bh = self.first_button.GetSize().Get()
+    bx, by = self.first_button.ClientToScreen(wx.Point(0, 0))
     self.RbDialog.Position(wx.Point(bx + bw * 8 // 10, by + bh // 2 - dh), wx.Size(1, 1))
     self.RbDialog.Show()
     self.RbDialog.SetFocus()
@@ -1197,7 +1291,10 @@ class RadioBtnPopup:
         break
   def GetLabel(self):
     return self.first_button.GetLabel()
-  def SetLabel(self, label, do_cmd=False):
+  def SetLabel(self, label, do_cmd=False, direction=None):
+    direc =  self.first_button.direction
+    if direction is not None:
+      self.first_button.direction = direction
     self.first_button.SetLabel(label)
     self.AddSecondButton(label)
     self.RbDialog.RbGroup.SetLabel(label, False)
@@ -1205,6 +1302,7 @@ class RadioBtnPopup:
       event = wx.PyEvent()
       event.SetEventObject(self.first_button)
       self.pop_command(event)
+    self.first_button.direction = direc
   def Refresh(self):
     pass
   def ChangeSlider(self, slider_value):
@@ -1216,7 +1314,7 @@ class RadioBtnPopup:
       event.SetEventObject(self.first_button)
       command(event)
   def GetPositionTuple(self):
-    return self.first_button.GetPositionTuple()
+    return self.first_button.GetPosition().Get()
   def GetParent(self):
     return self.parent
   def GetSize(self):
@@ -1229,25 +1327,25 @@ class FreqSetter(wx.TextCtrl):
     self.fmin = fmin
     self.fmax = fmax
     self.command = command
-    self.font = wx.Font(16, wx.FONTFAMILY_SWISS, wx.NORMAL, wx.FONTWEIGHT_NORMAL, face=conf.quisk_typeface)
+    self.font = wx.Font(16, wx.FONTFAMILY_SWISS, wx.NORMAL, wx.FONTWEIGHT_NORMAL, False, conf.quisk_typeface)
     t = wx.StaticText(parent, -1, label, pos=(x, y))
     t.SetFont(self.font)
     freq_w, freq_h = t.GetTextExtent(" 662 000 000")
-    tw, th = t.GetSizeTuple()
+    tw, th = t.GetSize().Get()
     x += tw + 20
     wx.TextCtrl.__init__(self, parent, size=(freq_w, freq_h), pos=(x, y),
       style=wx.TE_RIGHT|wx.TE_PROCESS_ENTER)
     self.SetFont(self.font)
     self.Bind(wx.EVT_TEXT, self.OnText)
     self.Bind(wx.EVT_TEXT_ENTER, self.OnEnter)
-    w, h = self.GetSizeTuple()
+    w, h = self.GetSize().Get()
     x += w + 1
     self.butn = b = wx.SpinButton(parent, size=(freq_h, freq_h), pos=(x, y))
-    w, h = b.GetSizeTuple()
+    w, h = b.GetSize().Get()
     self.end_pos = (x + w, y + h)
     b.Bind(wx.EVT_SPIN, self.OnSpin)	# The spin button frequencies are in kHz
-    b.SetMin(fmin / 1000)
-    b.SetMax(fmax / 1000)
+    b.SetMin(fmin // 1000)
+    b.SetMax(fmax // 1000)
     self.SetValue(freq)
   def OnText(self, event):
     self.SetBackgroundColour('pink')
@@ -1274,7 +1372,7 @@ class FreqSetter(wx.TextCtrl):
       freq = self.fmin
     elif freq > self.fmax:
       freq = self.fmax
-    self.butn.SetValue(freq / 1000)
+    self.butn.SetValue(freq // 1000)
     txt = FreqFormatter(freq)
     wx.TextCtrl.SetValue(self, txt)
     self.SetBackgroundColour(conf.color_entry)

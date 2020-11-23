@@ -3,6 +3,8 @@
 # features in HiQSDR, update your FPGA firmware to version 1.1 or later and use use_rx_udp = 2.
 
 from __future__ import print_function
+from __future__ import absolute_import
+from __future__ import division
 
 import struct, socket, math, traceback
 import _quisk as QS
@@ -105,8 +107,8 @@ class Hardware(BaseHardware):
     # Create the proper broadcast address for rx_udp_ip.
     nm = self.conf.rx_udp_ip_netmask.split('.')
     ip = self.conf.rx_udp_ip.split('.')
-    nm = map(int, nm)
-    ip = map(int, ip)
+    nm = list(map(int, nm))
+    ip = list(map(int, ip))
     bc = ''
     for i in range(4):
       x = (ip[i] | ~ nm[i]) & 0xFF
@@ -116,7 +118,11 @@ class Hardware(BaseHardware):
     self.socket_sndp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     self.socket_sndp.setblocking(0)
     self.socket_sndp.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    self.sndp_request = chr(56) + chr(0) + chr(0x5A) + chr(0xA5) + chr(0) * 52
+    self.sndp_request = bytearray(56)
+    self.sndp_request[0] = 56
+    self.sndp_request[1] = 0
+    self.sndp_request[2] = 0x5A
+    self.sndp_request[3] = 0xA5
     self.sndp_active = self.conf.sndp_active
     # conf.rx_udp_port is used for returning ADC samples
     # conf.rx_udp_port + 1 is used for control
@@ -258,10 +264,20 @@ class Hardware(BaseHardware):
         # traceback.print_exc()
         pass
       else:
-        if len(data) == 56 and data[5:14] == 'HiQSDR-v1':
+        data = bytearray(data)
+        if len(data) == 56 and data[5:14] == bytearray(b'HiQSDR-v1'):
           ip = self.conf.rx_udp_ip.split('.')
-          t = (data[0:4] + chr(2) + data[5:37] + chr(int(ip[3])) + chr(int(ip[2])) + chr(int(ip[1])) + chr(int(ip[0]))
-               + chr(0) * 12 + chr(self.conf.rx_udp_port & 0xFF) + chr(self.conf.rx_udp_port >> 8) + chr(0))
+          t = data[0:4]
+          t.append(2)
+          t += data[5:37]
+          t.append(int(ip[3]))
+          t.append(int(ip[2]))
+          t.append(int(ip[1]))
+          t.append(int(ip[0]))
+          t += bytearray(12)
+          t.append(self.conf.rx_udp_port & 0xFF)
+          t.append(self.conf.rx_udp_port >> 8)
+          t.append(0)
           if DEBUG: print("Sndp reply", repr(t))
           self.socket_sndp.sendto(t, (self.broadcast_addr, 48321))
     try:	# receive the old status if any
@@ -271,7 +287,8 @@ class Hardware(BaseHardware):
     except:
       pass
     else:
-      if data[0:2] == 'St':
+      data = bytearray(data)
+      if data[0:2] == b'St':
         self.got_udp_status = data
     if self.firmware_version is None:		# get the firmware version
       if self.want_udp_status[0:13] != self.got_udp_status[0:13]:
@@ -282,7 +299,7 @@ class Hardware(BaseHardware):
         except:
           pass
       else:		# We got a correct response.
-        self.firmware_version = ord(self.got_udp_status[13])	# Firmware version is returned here
+        self.firmware_version = self.got_udp_status[13]		# Firmware version is returned here
         if DEBUG:
           print ('Got version',  self.firmware_version)
         if self.firmware_version > 0 and self.conf.use_rx_udp == 2:
@@ -299,12 +316,12 @@ class Hardware(BaseHardware):
         except:
           pass
       elif DEBUG:
-        self.rx_udp_socket.send('Qs')
-  def PrintStatus(self, msg, string):
+        self.rx_udp_socket.send(b'Qs')
+  def PrintStatus(self, msg, data):
     print (msg, ' ', end=' ')
-    print (string[0:2], end=' ')
-    for c in string[2:]:
-      print ("%2X" % ord(c), end=' ')
+    print (data[0:2], end=' ')
+    for c in data[2:]:
+      print ("%2X" % c, end=' ')
     print ()
   def GetFirmwareVersion(self):
     return self.firmware_version
@@ -361,25 +378,26 @@ class Hardware(BaseHardware):
   def VarDecimRange(self):
     return (48000, 960000)
   def NewUdpStatus(self, do_tx=False):
-    s = "St"
+    s = bytearray(b'St')
     s = s + struct.pack("<L", self.rx_phase)
     s = s + struct.pack("<L", self.tx_phase)
-    s = s + chr(self.tx_level) + chr(self.tx_control)
-    s = s + chr(self.rx_control)
+    s.append(self.tx_level & 0xFF)
+    s.append(self.tx_control & 0xFF)
+    s.append(self.rx_control & 0xFF)
     if self.firmware_version:	# Add the version
-      s = s + chr(self.firmware_version)	# The firmware version will be returned
+      s.append(self.firmware_version & 0xFF)	# The firmware version will be returned
       if self.tx_control & 0x04:	# Use extra HiQSDR control bytes
-        s = s + chr(self.HiQSDR_Connector_X1)
-        s = s + chr(self.HiQSDR_Attenuator)
-        s = s + chr(self.HiQSDR_Bits)
+        s.append(self.HiQSDR_Connector_X1 & 0xFF)
+        s.append(self.HiQSDR_Attenuator & 0xFF)
+        s.append(self.HiQSDR_Bits & 0xFF)
       else:
-        s = s + chr(0) * 3
-      s = s + chr(self.sidetone_volume)
+        s += bytearray(3)
+      s.append(self.sidetone_volume & 0xFF)
       s = s + struct.pack("<H", self.vna_count)
-      s = s + chr(self.cw_delay)
-      s = s + chr(0)
+      s.append(self.cw_delay & 0xFF)
+      s.append(0)
     else:		# firmware version 0 or None
-      s = s + chr(0)	# assume version 0
+      s.append(0)	# assume version 0
     self.want_udp_status = s
     if do_tx:
       try:

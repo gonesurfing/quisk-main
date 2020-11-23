@@ -160,10 +160,18 @@ static void update_item(int item, const unsigned char * data)
 		sdr_interface = (data[1] << 8) | data[0];
 		break;
 	case 4:
-		if (data[0])
+		if (data[0]) {
 			sdr_firmware = (data[2] << 8) | data[1];
-		else
+#if DEBUG
+			printf ("Got firmware 0x%Xd\n", sdr_firmware);
+#endif
+		}
+		else {
 			sdr_bootcode = (data[2] << 8) | data[1];
+#if DEBUG
+			printf ("Got bootcode 0x%Xd\n", sdr_bootcode);
+#endif
+		}
 		break;
 	case 5:
 		sdr_status = data[0];
@@ -629,14 +637,14 @@ static void quisk_open_sdriq_dev(const char * name, char * buf, int bufsize)
 {
     struct termios newtio;
 
-	if (!strncmp(name, "/dev/ttyUSB", 11)) {	// use ftdi_sio driver
-		quisk_sdriq_fd = open(name, O_RDWR | O_NOCTTY);
-		if (quisk_sdriq_fd < 0) {
-			strncpy(buf, "Open SDR-IQ : ", bufsize);
-			strncat(buf, strerror(errno), bufsize - strlen(buf) - 1);
-			quisk_sdriq_fd = INVALID_HANDLE_VALUE;
-			return;
-		}
+	quisk_sdriq_fd = open(name, O_RDWR | O_NOCTTY | O_NONBLOCK);
+	if (quisk_sdriq_fd < 0) {
+		strncpy(buf, "Open SDR-IQ : ", bufsize);
+		strncat(buf, strerror(errno), bufsize - strlen(buf) - 1);
+		quisk_sdriq_fd = INVALID_HANDLE_VALUE;
+		return;
+	}
+	if (isatty(quisk_sdriq_fd)) {	// Thanks to Stephen Hurd for improvements
 		bzero(&newtio, sizeof(newtio));
 		newtio.c_cflag = CS8 | CLOCAL | CREAD;
 		newtio.c_iflag = IGNPAR;
@@ -650,13 +658,6 @@ static void quisk_open_sdriq_dev(const char * name, char * buf, int bufsize)
 		tcsetattr(quisk_sdriq_fd, TCSANOW, &newtio);
 	}
 	else {		// use ft245 or similar driver
-		quisk_sdriq_fd = open(name, O_RDWR | O_NONBLOCK); 
-		if (quisk_sdriq_fd < 0) {
-			strncpy(buf, "Open SDR-IQ: ", bufsize);
-			strncat(buf, strerror(errno), bufsize - strlen(buf) - 1);
-			quisk_sdriq_fd = INVALID_HANDLE_VALUE;
-			return;
-		}
 	}
 	return;
 }
@@ -871,6 +872,8 @@ static PyMethodDef QuiskMethods[] = {
 	{NULL, NULL, 0, NULL}		/* Sentinel */
 };
 
+#if PY_MAJOR_VERSION < 3
+// Python 2.7:
 // Initialization, and registration of public symbol "initsdriq":
 PyMODINIT_FUNC initsdriq (void)
 {
@@ -884,3 +887,30 @@ PyMODINIT_FUNC initsdriq (void)
 		return;		//Error
 	}
 }
+
+// Python 3:
+#else
+static struct PyModuleDef sdriqmodule = {
+	PyModuleDef_HEAD_INIT,
+	"sdriq",
+	NULL,
+	-1,
+	QuiskMethods
+} ;
+
+PyMODINIT_FUNC PyInit_sdriq(void)
+{
+	PyObject * m;
+
+	m = PyModule_Create(&sdriqmodule);
+	if (m == NULL)
+		return NULL;
+
+	// Import pointers to functions and variables from module _quisk
+	if (import_quisk_api()) {
+		printf("Failure to import pointers from _quisk\n");
+		return m;		//Error
+	}
+	return m;
+}
+#endif
